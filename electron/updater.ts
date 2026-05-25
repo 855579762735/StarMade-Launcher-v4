@@ -1,18 +1,19 @@
 /**
- * Launcher self-update checker and installer.
+ * Launcher self-update via ASAR swap.
  *
- * Flow:
+ * Strategy (works on all platforms without code signing):
  *  1. Query GitHub Releases API for the latest version tag.
  *  2. Compare against the running app version.
- *  3. If newer: find the platform-appropriate asset (portable .exe on Windows,
- *     AppImage on Linux), download it to a temp file with live progress
- *     callbacks, then execute/replace the launcher.
- *  4. If anything fails, open the releases page in the browser as a fallback.
+ *  3. If newer: download the `app.asar` asset from the release into
+ *     the resources directory as `app_update.asar`.
+ *  4. On next launch (or via app.relaunch()), the startup code detects
+ *     `app_update.asar` and swaps it into place before loading.
  *
- * macOS is intentionally excluded from silent install because code-signing and
- * notarisation make DMG silent-install impractical without a paid certificate.
- * On macOS, an update check that finds a newer version opens the releases page
- * in the browser so the user can download the DMG manually.
+ * For the initial launch swap, see `applyPendingUpdate()` which should
+ * be called very early in the main process before the app is ready.
+ *
+ * Fallback: if anything goes wrong, open the GitHub releases page in
+ * the user's browser.
  */
 
 import { app, shell } from 'electron';
@@ -20,42 +21,33 @@ import https from 'https';
 import http  from 'http';
 import fs    from 'fs';
 import path  from 'path';
-import os    from 'os';
-import { spawn, type SpawnOptions } from 'child_process';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const GITHUB_RELEASES_API =
   'https://api.github.com/repos/StarMade-Community/StarMade-Launcher-v4/releases/latest';
 
-/** Endpoint returning ALL releases (including pre-releases), newest first. */
 const GITHUB_ALL_RELEASES_API =
   'https://api.github.com/repos/StarMade-Community/StarMade-Launcher-v4/releases';
 
 const GITHUB_RELEASES_PAGE =
   'https://github.com/StarMade-Community/StarMade-Launcher-v4/releases/latest';
 
-/** Request timeout in milliseconds. */
 const TIMEOUT_MS = 30_000;
+
+const ASAR_ASSET_NAME = 'app.asar';
+const UPDATE_FILE_NAME = 'app_update.asar';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface UpdateInfo {
-  /** Whether a newer version is available. */
   available: boolean;
-  /** The latest release version string from GitHub (e.g. "4.1.0"). */
   latestVersion: string;
-  /** The currently running version (from package.json). */
   currentVersion: string;
-  /** Human-readable release notes / body from GitHub. */
   releaseNotes: string;
-  /** URL to the GitHub releases page for manual download. */
   downloadUrl: string;
-  /** Direct download URL for the platform-appropriate installer asset, if found. */
   assetUrl?: string;
-  /** Display name of the asset (e.g. "StarMade-Launcher.exe"). */
   assetName?: string;
-  /** Whether this release is a GitHub pre-release. */
   isPreRelease?: boolean;
 }
 
@@ -67,10 +59,6 @@ export interface DownloadProgress {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-/**
- * Compare two semver strings.
- * Returns -1 if a < b, 0 if equal, 1 if a > b.
- */
 function compareSemver(a: string, b: string): -1 | 0 | 1 {
   const parse = (s: string): [number, number, number] => {
     const parts = s.replace(/^v/, '').split('.');
@@ -87,34 +75,54 @@ function compareSemver(a: string, b: string): -1 | 0 | 1 {
 }
 
 /**
- * Pick the best installer asset for the current platform from a list of
- * GitHub release assets.
- *
- * Windows → .exe (portable executable)
- * Linux   → .AppImage
- * macOS   → not supported for silent install; returns undefined
+ * Resolve the `resources` directory that contains `app.asar`.
+ * - Windows/Linux: `<app-dir>/resources/`
+ * - macOS:         `<app-bundle>/Contents/Resources/`
  */
-function pickAsset(
-  assets: Array<{ name: string; browser_download_url: string }>
-): { name: string; browser_download_url: string } | undefined {
-  const plat = process.platform;
-
-  if (plat === 'win32') {
-    return assets.find(a => /\.exe$/i.test(a.name)) ?? undefined;
+function getResourcesDir(): string {
+  if (process.platform === 'darwin') {
+    // app.getAppPath() returns something like:
+    //   /Applications/StarMade Launcher.app/Contents/Resources/app.asar
+    // or when running from source:
+    //   /path/to/project
+    const appPath = app.getAppPath();
+    if (appPath.includes('app.asar')) {
+      return path.dirname(appPath);
+    }
+    return path.join(path.dirname(app.getPath('exe')), '..', 'Resources');
   }
 
-  if (plat === 'linux') {
-    return assets.find(a => /\.AppImage$/i.test(a.name)) ?? undefined;
+  // Windows / Linux
+  const appPath = app.getAppPath();
+  if (appPath.includes('app.asar')) {
+    return path.dirname(appPath);
   }
-
-  // macOS – no silent install
-  return undefined;
+  return path.join(path.dirname(app.getPath('exe')), 'resources');
 }
 
 /**
- * Perform a GET request that follows redirects and returns a Node.js
- * IncomingMessage stream.  Resolves once the final response is received.
+ * Find the `app.asar` asset URL from a GitHub release's assets array.
  */
+function findAsarAsset(
+  assets: Array<{ name: string; browser_download_url: string }>
+): { name: string; browser_download_url: string } | undefined {
+  return assets.find(a => a.name === ASAR_ASSET_NAME) ?? undefined;
+}
+
+/**
+ * Also look for a platform-specific installer as fallback (for the UI to show
+ * "Open in Browser" if ASAR isn't available).
+ */
+function findPlatformAsset(
+  assets: Array<{ name: string; browser_download_url: string }>
+): { name: string; browser_download_url: string } | undefined {
+  const plat = process.platform;
+  if (plat === 'win32') return assets.find(a => /\.exe$/i.test(a.name));
+  if (plat === 'linux') return assets.find(a => /\.AppImage$/i.test(a.name));
+  if (plat === 'darwin') return assets.find(a => /\.dmg$/i.test(a.name));
+  return undefined;
+}
+
 function httpGetStream(
   url: string,
   maxRedirects = 10
@@ -135,7 +143,7 @@ function httpGetStream(
         res.statusCode < 400 &&
         res.headers.location
       ) {
-        res.resume(); // drain
+        res.resume();
         httpGetStream(res.headers.location, maxRedirects - 1)
           .then(resolve)
           .catch(reject);
@@ -157,44 +165,10 @@ function httpGetStream(
   });
 }
 
-/** Resolve PowerShell path explicitly for environments where PATH is restricted. */
-function resolvePowerShellPath(): string {
-  const systemRoot = process.env.SystemRoot || process.env.WINDIR;
-  if (systemRoot) {
-    const candidate = path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-    if (fs.existsSync(candidate)) return candidate;
-  }
-  return 'powershell.exe';
-}
-
-/**
- * Launch a detached child and resolve only once the process has successfully
- * spawned.  If spawn fails (e.g. executable not found), reject so callers can
- * avoid quitting the current app instance.
- */
-async function spawnDetachedAndConfirm(
-  command: string,
-  args: string[],
-  options: SpawnOptions,
-): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn(command, args, options);
-    child.once('error', reject);
-    child.once('spawn', () => {
-      child.unref();
-      resolve();
-    });
-  });
-}
-
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /**
  * Check GitHub releases for a newer version of the launcher.
- *
- * @param options.includePreReleases  When `true`, the latest release
- *   (including pre-releases) is compared against the running version.
- *   When `false` (default), only stable releases are considered.
  */
 export async function checkForUpdates(
   options: { includePreReleases?: boolean } = {},
@@ -217,8 +191,6 @@ export async function checkForUpdates(
     if (!res.ok) throw new Error(`GitHub API returned HTTP ${res.status}`);
 
     if (includePreReleases) {
-      // All-releases endpoint returns an array; pick the first non-draft entry
-      // (GitHub returns releases sorted newest-published-at first).
       const releases = (await res.json()) as Array<Record<string, unknown>>;
       if (!Array.isArray(releases) || releases.length === 0) {
         throw new Error('GitHub API returned no releases');
@@ -246,17 +218,23 @@ export async function checkForUpdates(
   const isPreRelease   = release.prerelease === true;
   const available      = compareSemver(currentVersion, latestVersion) < 0;
 
-  // Try to locate a direct-download asset for the current platform
   let assetUrl: string | undefined;
   let assetName: string | undefined;
 
   if (available && Array.isArray(release.assets)) {
-    const picked = pickAsset(
-      release.assets as Array<{ name: string; browser_download_url: string }>
-    );
-    if (picked) {
-      assetUrl  = picked.browser_download_url;
-      assetName = picked.name;
+    const assets = release.assets as Array<{ name: string; browser_download_url: string }>;
+    // Prefer the app.asar asset for silent update
+    const asarAsset = findAsarAsset(assets);
+    if (asarAsset) {
+      assetUrl  = asarAsset.browser_download_url;
+      assetName = asarAsset.name;
+    } else {
+      // Fallback to platform installer (user will get "Open in Browser")
+      const platformAsset = findPlatformAsset(assets);
+      if (platformAsset) {
+        assetUrl  = platformAsset.browser_download_url;
+        assetName = platformAsset.name;
+      }
     }
   }
 
@@ -273,17 +251,18 @@ export async function checkForUpdates(
 }
 
 /**
- * Download an update asset to the OS temp directory, reporting progress via
- * the supplied callback.
+ * Download the app.asar update asset into the resources directory as
+ * `app_update.asar`, reporting progress via the supplied callback.
  *
- * @returns The absolute path to the downloaded file.
+ * @returns The absolute path to the downloaded update file.
  */
 export async function downloadUpdate(
   assetUrl: string,
-  assetName: string,
+  _assetName: string,
   onProgress: (progress: DownloadProgress) => void
 ): Promise<string> {
-  const destPath = path.join(os.tmpdir(), assetName);
+  const resourcesDir = getResourcesDir();
+  const destPath = path.join(resourcesDir, UPDATE_FILE_NAME);
 
   // Remove a stale partial download if present
   try { fs.unlinkSync(destPath); } catch { /* ignore */ }
@@ -308,192 +287,82 @@ export async function downloadUpdate(
     res.on('error', reject);
   });
 
-  // Strip the Mark-of-the-Web ADS so Windows SmartScreen/UAC doesn't
-  // block the installer before the PowerShell update script runs.
-  try { fs.unlinkSync(destPath + ':Zone.Identifier'); } catch { /* not present or non-Windows */ }
-
   return destPath;
 }
 
 /**
- * Install (execute) a downloaded update file.
+ * "Install" the update by restarting the app. The actual swap happens
+ * at the next startup via `applyPendingUpdate()`.
  *
- * • Windows portable .exe → wait for the current process to exit via a
- *                           PowerShell helper script, copy the new exe over
- *                           the current one, then relaunch.
- * • Linux AppImage        → make executable, replace the running binary with
- *                           the new one (via a shell wrapper), then relaunch.
- * • macOS              → opens the GitHub releases page in the browser so
- *                         the user can download the DMG manually (code-signing
- *                         is required for silent DMG install and is not yet
- *                         set up).
- *
- * Falls back to opening the releases page on any unexpected error.
+ * This works on ALL platforms (Windows, macOS, Linux) because we're only
+ * replacing the app.asar file, not the executable itself — no code signing
+ * issues.
  */
 export async function installUpdate(installerPath: string): Promise<void> {
-  const plat = process.platform;
-
-  // macOS requires code-signing & notarisation for a silent install, which
-  // isn't set up yet.  Just open the releases page so the user can grab the
-  // DMG manually.
-  if (plat === 'darwin') {
+  // Verify the update file exists
+  if (!installerPath || !fs.existsSync(installerPath)) {
+    console.error('[Updater] Update file missing, opening browser fallback');
     await shell.openExternal(GITHUB_RELEASES_PAGE);
     return;
   }
 
+  // Relaunch the app — applyPendingUpdate() will handle the swap on next start
+  app.relaunch();
+  app.quit();
+}
+
+/**
+ * Apply a pending update if one exists.
+ *
+ * Call this VERY EARLY in the main process (before `app.on('ready')`).
+ * It checks if `app_update.asar` exists in the resources directory and,
+ * if so, replaces `app.asar` with it.
+ *
+ * The swap is done synchronously before Electron loads the app code from
+ * `app.asar`, ensuring the new version is what actually runs.
+ */
+export function applyPendingUpdate(): boolean {
   try {
-    if (plat === 'win32') {
-      if (!installerPath || !fs.existsSync(installerPath)) {
-        throw new Error(`Downloaded update file is missing: ${installerPath}`);
-      }
+    const resourcesDir = getResourcesDir();
+    const updatePath = path.join(resourcesDir, UPDATE_FILE_NAME);
+    const appAsarPath = path.join(resourcesDir, 'app.asar');
 
-      // Write a PowerShell helper script that waits for the current process to
-      // exit, copies the new exe over the current one, then relaunches it.
-      //
-      // Paths are passed via environment variables to avoid any shell-injection
-      // risk from special characters in file paths.  A random suffix on the
-      // script name prevents predictable temp-file collisions.
-      //
-      // IMPORTANT: When running as an electron-builder portable executable,
-      // the app self-extracts to a temporary directory at runtime.
-      // app.getPath('exe') therefore returns the path to the *extracted* binary
-      // inside that temp dir — NOT the original portable .exe the user placed
-      // on disk.  electron-builder sets PORTABLE_EXECUTABLE_FILE to the real
-      // on-disk path of the portable .exe, so we must use that when available.
-      const currentExe = process.env.PORTABLE_EXECUTABLE_FILE || app.getPath('exe');
+    if (!fs.existsSync(updatePath)) return false;
 
-      const uniqueSuffix = Math.random().toString(36).slice(2);
-      const scriptPath = path.join(os.tmpdir(), `starmade-update-${uniqueSuffix}.ps1`);
-      const script = [
-        `$src        = $env:UPDATE_SRC`,
-        `$dst        = $env:UPDATE_DST`,
-        `$procId     = [int]$env:UPDATE_PID`,
-        `$scriptPath = $env:UPDATE_SCRIPT`,
-        `$logPath    = Join-Path $env:TEMP 'starmade-update-error.log'`,
-        `$backup     = "$dst.old"`,
-        ``,
-        `try {`,
-        `  # Wait for inner Electron process to exit`,
-        `  $intervalMs = 500`,
-        `  $maxWaitMs  = 300000`,
-        `  $elapsedMs  = 0`,
-        `  while ((Get-Process -Id $procId -ErrorAction SilentlyContinue) -and ($elapsedMs -lt $maxWaitMs)) {`,
-        `    Start-Sleep -Milliseconds $intervalMs`,
-        `    $elapsedMs += $intervalMs`,
-        `  }`,
-        `  if (Get-Process -Id $procId -ErrorAction SilentlyContinue) {`,
-        `    throw "Process $procId did not exit within timeout."`,
-        `  }`,
-        ``,
-        `  # The outer NSIS portable wrapper may still hold the exe file mapped while`,
-        `  # doing cleanup. Move-Item (rename) works even on running executables because`,
-        `  # Windows opens them with FILE_SHARE_DELETE. After rename, $dst is free.`,
-        `  if (Test-Path $backup) { Remove-Item -Force $backup -ErrorAction SilentlyContinue }`,
-        `  $maxAttempts = 10`,
-        `  $attempt = 0`,
-        `  $moved = $false`,
-        `  while (-not $moved -and $attempt -lt $maxAttempts) {`,
-        `    try {`,
-        `      Move-Item -Path $dst -Destination $backup -Force -ErrorAction Stop`,
-        `      $moved = $true`,
-        `    } catch {`,
-        `      $attempt++`,
-        `      Start-Sleep -Milliseconds 500`,
-        `    }`,
-        `  }`,
-        `  if (-not $moved) { throw "Could not rename current exe after $maxAttempts attempts." }`,
-        ``,
-        `  # Copy new exe to original path; restore backup if this fails`,
-        `  try {`,
-        `    Unblock-File -Path $src -ErrorAction SilentlyContinue`,
-        `    Copy-Item -Force $src $dst -ErrorAction Stop`,
-        `    Unblock-File -Path $dst -ErrorAction SilentlyContinue`,
-        `  } catch {`,
-        `    if ((Test-Path $backup) -and -not (Test-Path $dst)) {`,
-        `      Move-Item -Path $backup -Destination $dst -Force -ErrorAction SilentlyContinue`,
-        `    }`,
-        `    throw`,
-        `  }`,
-        ``,
-        `  Remove-Item -Force $backup -ErrorAction SilentlyContinue`,
-        `} catch {`,
-        `  Add-Content -Path $logPath -Value "$(Get-Date -Format o) - $($_.Exception.Message)" -ErrorAction SilentlyContinue`,
-        `}`,
-        ``,
-        `# Always relaunch regardless of update success/failure`,
-        `Start-Process $dst`,
-        `Remove-Item -Force $scriptPath -ErrorAction SilentlyContinue`,
-      ].join('\n');
+    console.log('[Updater] Found pending update, applying...');
 
-      fs.writeFileSync(scriptPath, script);
+    // Backup current app.asar
+    const backupPath = path.join(resourcesDir, 'app.asar.backup');
+    try { fs.unlinkSync(backupPath); } catch { /* no previous backup */ }
 
-      const powershellPath = resolvePowerShellPath();
-
-      await spawnDetachedAndConfirm(powershellPath, [
-        '-WindowStyle', 'Hidden',
-        '-ExecutionPolicy', 'Bypass',
-        '-File', scriptPath,
-      ], {
-        detached: true,
-        stdio: 'ignore',
-        env: {
-          ...process.env,
-          UPDATE_SRC: installerPath,
-          UPDATE_DST: currentExe,
-          UPDATE_PID: String(process.pid),
-          UPDATE_SCRIPT: scriptPath,
-        },
-      });
-
-      app.quit();
-      return;
+    try {
+      fs.copyFileSync(appAsarPath, backupPath);
+    } catch (err) {
+      console.error('[Updater] Failed to backup current app.asar:', err);
+      // Continue anyway — the update is more important
     }
 
-    if (plat === 'linux') {
-      // Make the AppImage executable
-      fs.chmodSync(installerPath, 0o755);
-
-      // When running as an AppImage, app.getPath('exe') returns the Electron
-      // binary path *inside* the read-only squashfs mount (e.g.
-      // /tmp/.mount_StarMaXXXX/starmade-launcher-v4.bin), not the .AppImage
-      // file itself.  Copying to that path fails because the squashfs is
-      // read-only, and after app.quit() the mount is torn down so the exec
-      // also fails — leaving the old AppImage untouched and causing the update
-      // prompt to reappear on every launch.
-      //
-      // The AppImage runtime always sets APPIMAGE to the path of the actual
-      // .AppImage file on disk, so use that when available and fall back to
-      // app.getPath('exe') for non-AppImage Linux installs (deb, rpm, etc.).
-      const currentExe = process.env.APPIMAGE || app.getPath('exe');
-
-      // Write a tiny shell script that waits for us to exit, then replaces
-      // the current executable and relaunches it.
-      const scriptPath = path.join(os.tmpdir(), 'starmade-update.sh');
-      const script = [
-        '#!/bin/sh',
-        `# Wait until the old launcher process has exited`,
-        `while kill -0 ${process.pid} 2>/dev/null; do sleep 0.5; done`,
-        `cp -f "${installerPath}" "${currentExe}"`,
-        `chmod +x "${currentExe}"`,
-        `"${currentExe}" &`,
-      ].join('\n');
-
-      fs.writeFileSync(scriptPath, script, { mode: 0o755 });
-
-      spawn('/bin/sh', [scriptPath], {
-        detached: true,
-        stdio: 'ignore',
-      }).unref();
-
-      app.quit();
-      return;
+    // Replace app.asar with the update
+    try {
+      fs.copyFileSync(updatePath, appAsarPath);
+      fs.unlinkSync(updatePath);
+      console.log('[Updater] Update applied successfully');
+      return true;
+    } catch (err) {
+      console.error('[Updater] Failed to apply update:', err);
+      // Try to restore backup
+      try {
+        if (fs.existsSync(backupPath)) {
+          fs.copyFileSync(backupPath, appAsarPath);
+        }
+      } catch { /* last resort failed */ }
+      // Clean up the broken update file
+      try { fs.unlinkSync(updatePath); } catch { /* ignore */ }
+      return false;
     }
-
-    // macOS or unhandled platform – open the browser fallback
-    await shell.openExternal(GITHUB_RELEASES_PAGE);
   } catch (err) {
-    console.error('[Updater] installUpdate failed, opening browser fallback:', err);
-    await shell.openExternal(GITHUB_RELEASES_PAGE);
+    console.error('[Updater] applyPendingUpdate error:', err);
+    return false;
   }
 }
 

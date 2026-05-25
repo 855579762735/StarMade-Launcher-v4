@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import PageContainer from '../../common/PageContainer';
 import CustomDropdown from '../../common/CustomDropdown';
+import SyncToolbar from '../../common/SyncToolbar';
 import { useData } from '../../../contexts/DataContext';
 import { FolderIcon, TrashIcon, ArchiveIcon, CheckIcon } from '../../common/icons';
 import type { ManagedItem } from '../../../types';
@@ -338,6 +339,19 @@ const Blueprints: React.FC = () => {
               value={typeFilter}
               onChange={setTypeFilter}
               className="w-44"
+            />
+          </div>
+        )}
+
+        {/* Sync toolbar */}
+        {!noCatalog && selectedInstance && (
+          <div className="mb-3 flex-shrink-0">
+            <SyncToolbar
+              catalogPath={catalogPath}
+              installationPath={selectedInstance.path}
+              kinds={['blueprint', 'exported']}
+              autoSyncStoreKey="blueprintsAutoSync"
+              onSyncComplete={() => { void loadCatalog(true); void loadInstall(true); }}
             />
           </div>
         )}

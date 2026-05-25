@@ -895,8 +895,16 @@ const launcherApi = {
       items: Array<{ kind: string; name?: string; fileName?: string }>,
       targetPath: string,
       overwrite?: boolean,
+      direction?: 'deploy' | 'import',
     ): Promise<{ success: boolean; copiedCount?: number; skippedCount?: number; errors?: string[] }> =>
-      ipcRenderer.invoke(IPC.CATALOG_SYNC_APPLY, catalogPath, items, targetPath, overwrite),
+      ipcRenderer.invoke(IPC.CATALOG_SYNC_APPLY, catalogPath, items, targetPath, overwrite, direction),
+
+    /** Subscribe to sync progress events. Returns cleanup function. */
+    onSyncProgress: (callback: (progress: { percent: number; currentItem: string; copiedCount: number; totalCount: number }) => void): (() => void) => {
+      const handler = (_event: unknown, progress: { percent: number; currentItem: string; copiedCount: number; totalCount: number }) => callback(progress);
+      ipcRenderer.on(IPC.CATALOG_SYNC_PROGRESS, handler);
+      return () => { ipcRenderer.removeListener(IPC.CATALOG_SYNC_PROGRESS, handler); };
+    },
   },
 
   /** Legacy installation detection APIs */
@@ -991,6 +999,21 @@ const launcherApi = {
       assetName?: string;
       isPreRelease?: boolean;
     }> => ipcRenderer.invoke(IPC.UPDATER_CHECK, options),
+
+    /**
+     * Force-fetch the latest release info with `available: true` regardless
+     * of current version. Used for testing the update flow.
+     */
+    forceUpdate: (options?: { includePreReleases?: boolean }): Promise<{
+      available: boolean;
+      latestVersion: string;
+      currentVersion: string;
+      releaseNotes: string;
+      downloadUrl: string;
+      assetUrl?: string;
+      assetName?: string;
+      isPreRelease?: boolean;
+    }> => ipcRenderer.invoke(IPC.UPDATER_FORCE_UPDATE, options),
 
     /**
      * Download the update asset. Returns the local installer path on success.

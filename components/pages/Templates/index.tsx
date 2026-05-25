@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import PageContainer from '../../common/PageContainer';
 import CustomDropdown from '../../common/CustomDropdown';
+import SyncToolbar from '../../common/SyncToolbar';
 import { useData } from '../../../contexts/DataContext';
 import { FolderIcon, TrashIcon, CheckIcon } from '../../common/icons';
 import type { ManagedItem } from '../../../types';
@@ -255,6 +256,19 @@ const Templates: React.FC = () => {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="flex-1 px-3 py-1.5 rounded-lg bg-black/30 border border-white/10 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-starmade-accent/50"
+            />
+          </div>
+        )}
+
+        {/* Sync toolbar */}
+        {!noCatalog && selectedInstance && (
+          <div className="mb-3 flex-shrink-0">
+            <SyncToolbar
+              catalogPath={catalogPath}
+              installationPath={selectedInstance.path}
+              kinds={['template']}
+              autoSyncStoreKey="templatesAutoSync"
+              onSyncComplete={() => { void loadCatalog(true); void loadInstall(true); }}
             />
           </div>
         )}

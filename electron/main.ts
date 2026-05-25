@@ -24,7 +24,7 @@ import type { DownloadProgress } from './downloader.js';
 import { downloadJava, detectSystemJava, resolveJavaPath, getDefaultJavaPaths, findJavaExecutableInDir } from './java.js';
 import { launchGame, stopGame, getGameStatus, getAllRunningGames, hasRunningGames, stopAllGames, getLogPath, openLogLocation, clearServerLogFiles, getGraphicsInfo, listServerLogFiles, readServerLogFile, sendServerStdin, listChatFiles, readChatFile, getPlayTimeTotals } from './launcher.js';
 import type { UpdateInfo } from './updater.js';
-import { checkForUpdates, downloadUpdate, installUpdate, openReleasesPage } from './updater.js';
+import { checkForUpdates, downloadUpdate, installUpdate, openReleasesPage, applyPendingUpdate } from './updater.js';
 import { createBackup, listBackups, restoreBackup } from './backup.js';
 import {
   loginWithPassword,
@@ -46,8 +46,10 @@ import {
   deleteCatalogItem,
   importSmentToCatalog,
   computeSyncDiff,
+  deployWithProgress,
+  importWithProgress,
 } from './blueprints.js';
-import type { CatalogItemRef } from './blueprints.js';
+import type { CatalogItemRef, SyncProgress } from './blueprints.js';
 import { getManagedPathCandidates } from './install-paths.js';
 import { registerRemoteIpcHandlers } from './starmote-ipc.js';
 import { isStarmoteRolloutEnabled } from './starmote-feature-flag.js';
@@ -2582,10 +2584,21 @@ ipcMain.handle(
 
 ipcMain.handle(
   IPC.CATALOG_SYNC_APPLY,
-  (_event, catalogPath: string, items: CatalogItemRef[], targetPath: string, overwrite?: boolean) => {
+  async (event, catalogPath: string, items: CatalogItemRef[], targetPath: string, overwrite?: boolean, direction?: string) => {
     if (!catalogPath) return { success: false, errors: ['No catalog path configured.'] };
+
+    const sender = event.sender;
+    const onProgress = (progress: SyncProgress) => {
+      if (!sender.isDestroyed()) {
+        sender.send(IPC.CATALOG_SYNC_PROGRESS, progress);
+      }
+    };
+
     try {
-      return deployToInstallations(catalogPath, items, [targetPath], overwrite ?? false);
+      if (direction === 'import') {
+        return await importWithProgress(targetPath, items, catalogPath, overwrite ?? false, onProgress);
+      }
+      return await deployWithProgress(catalogPath, items, targetPath, overwrite ?? false, onProgress);
     } catch (error) {
       return { success: false, errors: [String(error)] };
     }
@@ -2829,6 +2842,18 @@ ipcMain.handle(
 );
 
 ipcMain.handle(
+  IPC.UPDATER_FORCE_UPDATE,
+  async (
+    _event,
+    options?: { includePreReleases?: boolean },
+  ): Promise<UpdateInfo> => {
+    const info = await checkForUpdates(options);
+    // Force available=true so the UI proceeds with download even if same version
+    return { ...info, available: true };
+  },
+);
+
+ipcMain.handle(
   IPC.UPDATER_DOWNLOAD,
   async (
     event,
@@ -2984,6 +3009,10 @@ async function runStartupUpdateCheck(): Promise<void> {
     console.warn('[updater] Startup check failed:', err);
   }
 }
+
+// ─── Apply pending ASAR update before app loads ─────────────────────────────
+
+applyPendingUpdate();
 
 // ─── App lifecycle ───────────────────────────────────────────────────────────
 

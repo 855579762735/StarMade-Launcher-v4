@@ -482,6 +482,106 @@ function itemLabel(item: CatalogItemRef): string {
   return item.kind === 'blueprint' ? item.name : ('fileName' in item ? item.fileName : '');
 }
 
+// ─── Async Deploy/Import with Progress ──────────────────────────────────────
+
+export interface SyncProgress {
+  percent: number;
+  currentItem: string;
+  copiedCount: number;
+  totalCount: number;
+}
+
+export async function deployWithProgress(
+  catalogPath: string,
+  items: CatalogItemRef[],
+  targetPath: string,
+  overwrite: boolean,
+  onProgress?: (progress: SyncProgress) => void,
+): Promise<CatalogCopyResult> {
+  let copiedCount = 0;
+  let skippedCount = 0;
+  const errors: string[] = [];
+  const total = items.length;
+
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    const label = itemLabel(item);
+    onProgress?.({ percent: Math.round((i / total) * 100), currentItem: label, copiedCount, totalCount: total });
+
+    try {
+      const { src, dst } = resolveItemPaths(catalogPath, targetPath, item);
+      if (fs.existsSync(dst) && !overwrite) {
+        skippedCount++;
+        continue;
+      }
+      if (item.kind === 'blueprint') {
+        await fsp.mkdir(path.dirname(dst), { recursive: true });
+        fs.cpSync(src, dst, { recursive: true, force: true });
+      } else {
+        await fsp.mkdir(path.dirname(dst), { recursive: true });
+        await fsp.copyFile(src, dst);
+      }
+      copiedCount++;
+    } catch (err) {
+      errors.push(`Failed to deploy ${label}: ${String(err)}`);
+    }
+
+    // Yield to event loop periodically
+    if (i % 10 === 0) await new Promise((r) => setImmediate(r));
+  }
+
+  onProgress?.({ percent: 100, currentItem: '', copiedCount, totalCount: total });
+  invalidateCatalogCache(targetPath);
+  return { success: errors.length === 0, copiedCount, skippedCount, errors: errors.length ? errors : undefined };
+}
+
+export async function importWithProgress(
+  installPath: string,
+  items: CatalogItemRef[],
+  catalogPath: string,
+  overwrite: boolean,
+  onProgress?: (progress: SyncProgress) => void,
+): Promise<CatalogCopyResult> {
+  await fsp.mkdir(path.join(catalogPath, BLUEPRINTS_DIR), { recursive: true });
+  await fsp.mkdir(path.join(catalogPath, EXPORTED_DIR), { recursive: true });
+  await fsp.mkdir(path.join(catalogPath, TEMPLATES_DIR), { recursive: true });
+
+  let copiedCount = 0;
+  let skippedCount = 0;
+  const errors: string[] = [];
+  const total = items.length;
+
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    const label = itemLabel(item);
+    onProgress?.({ percent: Math.round((i / total) * 100), currentItem: label, copiedCount, totalCount: total });
+
+    try {
+      const { src, dst } = resolveItemPaths(installPath, catalogPath, item);
+      if (fs.existsSync(dst) && !overwrite) {
+        skippedCount++;
+        continue;
+      }
+      if (item.kind === 'blueprint') {
+        await fsp.mkdir(path.dirname(dst), { recursive: true });
+        fs.cpSync(src, dst, { recursive: true, force: true });
+      } else {
+        await fsp.mkdir(path.dirname(dst), { recursive: true });
+        await fsp.copyFile(src, dst);
+      }
+      copiedCount++;
+    } catch (err) {
+      errors.push(`Failed to import ${label}: ${String(err)}`);
+    }
+
+    if (i % 10 === 0) await new Promise((r) => setImmediate(r));
+  }
+
+  onProgress?.({ percent: 100, currentItem: '', copiedCount, totalCount: total });
+  invalidateCatalogCache(catalogPath);
+  return { success: errors.length === 0, copiedCount, skippedCount, errors: errors.length ? errors : undefined };
+}
+
 // ─── Sync Diff ───────────────────────────────────────────────────────────────
 
 export interface SyncDiffItem {

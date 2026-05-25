@@ -15,6 +15,7 @@ import GameLogViewer from './components/common/GameLogViewer';
 import UpdateAvailableModal from './components/common/UpdateAvailableModal';
 import LegacyImportPromptModal from './components/common/LegacyImportPromptModal';
 import LastPlayedWidget from './components/common/LastPlayedWidget';
+import GameUpdateNotice from './components/common/GameUpdateNotice';
 import { useApp } from './contexts/AppContext';
 import { useData } from './contexts/DataContext';
 import useLegacyInstallImporter from './components/hooks/useLegacyInstallImporter';
@@ -392,6 +393,8 @@ const App: React.FC = () => {
         onOpenSettings={handleOpenLegacyImportSettings}
         onDismiss={handleDismissLegacyPrompt}
       />
+
+      <GameUpdateNotice />
 
       {logViewerInstallation && (
         <GameLogViewer

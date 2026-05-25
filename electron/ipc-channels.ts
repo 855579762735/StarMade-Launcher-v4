@@ -274,6 +274,8 @@ export const IPC = {
   CATALOG_SYNC_DIFF: 'catalog:sync-diff',
   /** Renderer → Main (invoke): apply a sync from catalog to installation (deploy all, skip conflicts unless overwrite). */
   CATALOG_SYNC_APPLY: 'catalog:sync-apply',
+  /** Main → Renderer: live sync progress update (percent, current item). */
+  CATALOG_SYNC_PROGRESS: 'catalog:sync-progress',
 
   // ─── Legacy installation detection ──────────────────────────────────────────
 
@@ -295,6 +297,12 @@ export const IPC = {
   UPDATER_CHECK: 'updater:check',
   /** Renderer → Main (invoke): get the current running launcher version string. */
   UPDATER_GET_VERSION: 'updater:get-version',
+  /**
+   * Renderer → Main (invoke): force-download the latest release's app.asar
+   * regardless of current version (for testing updates).
+   * Returns: UpdateInfo with available always true.
+   */
+  UPDATER_FORCE_UPDATE: 'updater:force-update',
   /** Main → Renderer: a newer launcher version was found during the startup check. */
   UPDATER_UPDATE_AVAILABLE: 'updater:update-available',
 

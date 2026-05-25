@@ -76,6 +76,7 @@ const LauncherSettings: React.FC = () => {
     const [legacyFound, setLegacyFound] = useState<string[]>([]);
     const [isScanning, setIsScanning] = useState(false);
     const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
+    const [isForceUpdating, setIsForceUpdating] = useState(false);
     const [updateCheckResult, setUpdateCheckResult] = useState<string | null>(null);
     const [updateModalInfo, setUpdateModalInfo] = useState<UpdateInfo | null>(null);
     const [isUpdateModalOpen, setIsUpdateModalOpen] = useState(false);
@@ -290,6 +291,25 @@ const LauncherSettings: React.FC = () => {
             setIsCheckingUpdate(false);
             const UPDATE_MESSAGE_DISPLAY_DURATION_MS = 6_000;
             setTimeout(() => setUpdateCheckResult(null), UPDATE_MESSAGE_DISPLAY_DURATION_MS);
+        }
+    };
+
+    const handleForceUpdate = async () => {
+        if (typeof window === 'undefined' || !window.launcher?.updater) return;
+        setIsForceUpdating(true);
+        setUpdateCheckResult(null);
+        try {
+            const info = await window.launcher.updater.forceUpdate({
+                includePreReleases: settings.useBetaChannel,
+            });
+            setUpdateModalInfo(info);
+            setIsUpdateModalOpen(true);
+            setUpdateCheckResult(`Fetched latest: v${info.latestVersion} — ready to download`);
+        } catch (error) {
+            console.error('Failed to force update:', error);
+            setUpdateCheckResult('Failed to fetch latest release. Please try again later.');
+        } finally {
+            setIsForceUpdating(false);
         }
     };
 
@@ -520,6 +540,15 @@ const LauncherSettings: React.FC = () => {
                                     <span className="text-xs text-gray-400">{updateCheckResult}</span>
                                 )}
                             </div>
+                        </SettingRow>
+                        <SettingRow title="Force re-download" description="Re-download the latest version regardless of current version. Useful for testing or repairing the updater.">
+                            <button
+                                onClick={handleForceUpdate}
+                                disabled={isForceUpdating}
+                                className="px-4 py-2 rounded-md bg-amber-700/60 hover:bg-amber-700/80 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm font-semibold uppercase tracking-wider text-amber-100"
+                            >
+                                {isForceUpdating ? 'Fetching…' : 'Force Update'}
+                            </button>
                         </SettingRow>
                     </div>
                 </div>

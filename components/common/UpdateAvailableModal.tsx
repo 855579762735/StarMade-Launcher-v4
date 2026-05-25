@@ -147,10 +147,10 @@ const UpdateAvailableModal: React.FC<UpdateAvailableModalProps> = ({
 
     if (!isOpen || !updateInfo) return null;
 
-    // Silent download+install only works on Linux (no code-signing restrictions).
-    // On Windows/macOS, direct the user to the releases page instead.
-    const isLinux = navigator.userAgent.includes('Linux');
-    const canSilentInstall = isLinux && Boolean(updateInfo.assetUrl);
+    // ASAR swap update works on all platforms without code signing.
+    // If the asset is named "app.asar", we can do a silent in-place update.
+    const canSilentInstall = Boolean(updateInfo.assetUrl) &&
+      (updateInfo.assetName === 'app.asar' || navigator.userAgent.includes('Linux'));
 
     const formatBytes = (b: number) => {
         if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;

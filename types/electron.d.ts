@@ -520,7 +520,8 @@ declare global {
           items: Array<{ ref: { kind: string; name?: string; fileName?: string }; label: string; status: 'new' | 'modified' | 'up-to-date'; catalogModifiedMs: number; installModifiedMs: number }>;
           newCount: number; modifiedCount: number; upToDateCount: number; error?: string;
         }>;
-        syncApply: (catalogPath: string, items: Array<{ kind: string; name?: string; fileName?: string }>, targetPath: string, overwrite?: boolean) => Promise<{ success: boolean; copiedCount?: number; skippedCount?: number; errors?: string[] }>;
+        syncApply: (catalogPath: string, items: Array<{ kind: string; name?: string; fileName?: string }>, targetPath: string, overwrite?: boolean, direction?: 'deploy' | 'import') => Promise<{ success: boolean; copiedCount?: number; skippedCount?: number; errors?: string[] }>;
+        onSyncProgress: (callback: (progress: { percent: number; currentItem: string; copiedCount: number; totalCount: number }) => void) => () => void;
       };
 
       /** Icon image APIs */
@@ -598,11 +599,18 @@ declare global {
           currentVersion: string;
           releaseNotes: string;
           downloadUrl: string;
-          /** Direct download URL for the platform installer asset, if available. */
           assetUrl?: string;
-          /** Filename of the installer asset. */
           assetName?: string;
-          /** Whether the discovered release is a pre-release build. */
+          isPreRelease?: boolean;
+        }>;
+        forceUpdate: (options?: { includePreReleases?: boolean }) => Promise<{
+          available: boolean;
+          latestVersion: string;
+          currentVersion: string;
+          releaseNotes: string;
+          downloadUrl: string;
+          assetUrl?: string;
+          assetName?: string;
           isPreRelease?: boolean;
         }>;
         /**

@@ -73,14 +73,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SMD_API_KEY: ${{ secrets.SMD_API_KEY }}
-          # Apple Developer credentials required for code signing + notarization.
-          # Without these, macOS users must manually approve the app in
-          # System Settings > Privacy & Security on first launch.
-          # CSC_LINK: ${{ secrets.MACOS_CERTIFICATE }}
-          # CSC_KEY_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
-          # APPLE_ID: ${{ secrets.APPLE_ID }}
-          # APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          # APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
       - name: Upload macOS ARM artifacts
         uses: actions/upload-artifact@v4
@@ -114,14 +106,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SMD_API_KEY: ${{ secrets.SMD_API_KEY }}
-          # Apple Developer credentials required for code signing + notarization.
-          # Without these, macOS users must manually approve the app in
-          # System Settings > Privacy & Security on first launch.
-          # CSC_LINK: ${{ secrets.MACOS_CERTIFICATE }}
-          # CSC_KEY_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
-          # APPLE_ID: ${{ secrets.APPLE_ID }}
-          # APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          # APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
       - name: Upload macOS Intel artifacts
         uses: actions/upload-artifact@v4
@@ -163,24 +147,13 @@ jobs:
           path: release/StarMade-Launcher.AppImage
           retention-days: 7
 
-  # ─── Sign Windows build via SignPath ─────────────────────────────────────
-  # Disabled until SignPath signing is set up.
-  # sign-windows:
-  #   name: Sign Windows (SignPath)
-  #   needs: build-windows
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - name: Submit signing request
-  #       uses: signpath/github-action-submit-signing-request@v1
-  #       with:
-  #         api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
-  #         organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
-  #         project-slug: starmade-launcher
-  #         signing-policy-slug: release-signing
-  #         artifact-configuration-slug: default
-  #         github-artifact-id: ${{ needs.build-windows.outputs.artifact-id }}
-  #         wait-for-completion: true
-  #         output-artifact-name: windows-builds-signed
+      # app.asar is platform-independent; extract it for the ASAR-swap updater
+      - name: Upload app.asar for auto-updater
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-asar
+          path: release/linux-unpacked/resources/app.asar
+          retention-days: 7
 
   # ─── Create Draft Release ─────────────────────────────────────────────────
   create-release:
@@ -214,6 +187,12 @@ jobs:
         with:
           name: linux-builds
           path: artifacts/linux
+
+      - name: Download app.asar for auto-updater
+        uses: actions/download-artifact@v4
+        with:
+          name: app-asar
+          path: artifacts/asar
 
       # Extract version from package.json
       - name: Set version
@@ -280,6 +259,7 @@ jobs:
             artifacts/windows/*
             artifacts/macos/*
             artifacts/linux/*
+            artifacts/asar/app.asar
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

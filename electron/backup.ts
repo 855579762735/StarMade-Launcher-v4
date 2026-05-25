@@ -43,20 +43,54 @@ function getBackupDir(): string {
   return path.join(app.getPath('appData'), BACKUP_DIR_NAME);
 }
 
+// Directories and files that Chromium/Electron locks at runtime and which are
+// not needed for a settings backup (session data, caches, GPU state, etc.).
+const SKIP_NAMES = new Set([
+  'Cache',
+  'CachedData',
+  'Code Cache',
+  'DawnGraphiteCache',
+  'DawnWebGPUCache',
+  'GPUCache',
+  'Network',
+  'Service Worker',
+  'Session Storage',
+  'WebStorage',
+  'blob_storage',
+  'shared_proto_db',
+  'IndexedDB',
+  'Local Storage',
+  'Crashpad',
+  'GrShaderCache',
+  'ShaderCache',
+  'SingletonCookie',
+  'SingletonLock',
+  'lockfile',
+]);
+
 /**
  * Recursively copy all files and directories from `src` to `dest`.
  * `dest` is created if it does not exist.
+ * Skips Chromium runtime files that are locked by the running process.
  */
 function copyDirRecursive(src: string, dest: string): void {
   fs.mkdirSync(dest, { recursive: true });
   const entries = fs.readdirSync(src, { withFileTypes: true });
   for (const entry of entries) {
+    if (SKIP_NAMES.has(entry.name)) continue;
+
     const srcPath  = path.join(src,  entry.name);
     const destPath = path.join(dest, entry.name);
     if (entry.isDirectory()) {
       copyDirRecursive(srcPath, destPath);
     } else if (entry.isFile()) {
-      fs.copyFileSync(srcPath, destPath);
+      try {
+        fs.copyFileSync(srcPath, destPath);
+      } catch (err: unknown) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code === 'EBUSY' || code === 'EPERM') continue;
+        throw err;
+      }
     }
   }
 }
