@@ -18,6 +18,10 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, '.'),
+      // `original-fs` is an Electron-only module (un-patched Node fs).
+      // In the test environment (plain Node) it doesn't exist, so alias
+      // it to the standard `fs` module.
+      'original-fs': 'fs',
     },
   },
 });
