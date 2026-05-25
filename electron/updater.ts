@@ -19,7 +19,12 @@
 import { app, shell } from 'electron';
 import https from 'https';
 import http  from 'http';
-import fs    from 'fs';
+// Use original-fs to bypass Electron's ASAR interception.
+// Electron patches the standard `fs` module to transparently treat `.asar`
+// files as virtual directories, which breaks our ability to read/write/copy
+// raw `.asar` files (e.g. downloading `app_update.asar` and swapping it
+// into place).  `original-fs` is the un-patched Node.js fs module.
+import fs    from 'original-fs';
 import path  from 'path';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
