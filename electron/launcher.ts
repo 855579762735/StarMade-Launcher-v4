@@ -510,14 +510,17 @@ export async function launchGame(options: LaunchOptions): Promise<LaunchResult> 
 
     sendLogEvent(installationId, 'INFO', `Command: ${safeArgs.join(' ')}`);
 
-    // Spawn the process.
-    // For server processes we open stdin as a pipe so we can send console
-    // commands (e.g. admin broadcast messages) while the server is running.
+    // Spawn the process detached so it lives outside the Electron process
+    // tree.  This lets Steam (and other launchers) see the Electron app as
+    // exited once its windows close, even while StarMade keeps running.
     const child = spawn(javaPath, args, {
       cwd: installationPath,
       stdio: [isServer ? 'pipe' : 'ignore', 'pipe', 'pipe'],
-      detached: false,
+      detached: true,
     });
+
+    // Allow Electron to exit without waiting for the child.
+    child.unref();
 
     // Track the process
     runningProcesses.set(installationId, {
@@ -570,6 +573,13 @@ export async function launchGame(options: LaunchOptions): Promise<LaunchResult> 
         }
       });
     });
+
+    // Unref the stdio streams so they don't prevent Electron from exiting.
+    // The underlying sockets have unref() but the TS Readable/Writable types
+    // don't expose it, so cast to any.
+    (child.stdout as any)?.unref?.();
+    (child.stderr as any)?.unref?.();
+    if (isServer) (child.stdin as any)?.unref?.();
 
     // Handle process exit
     child.on('exit', (code, signal) => {

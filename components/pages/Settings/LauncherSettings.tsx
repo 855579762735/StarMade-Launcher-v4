@@ -30,9 +30,9 @@ const STORE_KEY = 'launcherSettings';
 const DEFAULT_SETTINGS: LauncherSettingsData = {
     checkForUpdates: true,
     useBetaChannel: false,
-    showLog: false,
+    showLog: true,
     language: 'English (US)',
-    closeBehavior: 'Close launcher',
+    closeBehavior: 'Keep the launcher open',
 };
 
 // ─── Sub-components ──────────────────────────────────────────────────────────

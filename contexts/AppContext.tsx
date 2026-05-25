@@ -8,9 +8,9 @@ const LAUNCHER_SETTINGS_KEY = 'launcherSettings';
 const DEFAULT_LAUNCHER_SETTINGS: LauncherSettingsData = {
     checkForUpdates: true,
     useBetaChannel: false,
-    showLog: false,
+    showLog: true,
     language: 'English (US)',
-    closeBehavior: 'Close launcher',
+    closeBehavior: 'Keep the launcher open',
 };
 const POST_LAUNCH_CLOSE_DELAY_MS = 250;
 

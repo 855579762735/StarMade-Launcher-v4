@@ -22,7 +22,7 @@ import { fetchAllVersions, invalidateVersionCache } from './versions.js';
 import { startDownload, cancelDownload } from './downloader.js';
 import type { DownloadProgress } from './downloader.js';
 import { downloadJava, detectSystemJava, resolveJavaPath, getDefaultJavaPaths, findJavaExecutableInDir } from './java.js';
-import { launchGame, stopGame, getGameStatus, getAllRunningGames, hasRunningGames, stopAllGames, getLogPath, openLogLocation, clearServerLogFiles, getGraphicsInfo, listServerLogFiles, readServerLogFile, sendServerStdin, listChatFiles, readChatFile, getPlayTimeTotals } from './launcher.js';
+import { launchGame, stopGame, getGameStatus, getAllRunningGames, getLogPath, openLogLocation, clearServerLogFiles, getGraphicsInfo, listServerLogFiles, readServerLogFile, sendServerStdin, listChatFiles, readChatFile, getPlayTimeTotals } from './launcher.js';
 import type { UpdateInfo } from './updater.js';
 import { checkForUpdates, downloadUpdate, installUpdate, openReleasesPage, applyPendingUpdate } from './updater.js';
 import { createBackup, listBackups, restoreBackup } from './backup.js';
@@ -3051,17 +3051,7 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
-    if (hasRunningGames()) {
-      console.log('[main] All launcher windows closed while StarMade is still running; keeping the app alive in the background.');
-      return;
-    }
-
     app.quit();
   }
-});
-
-app.on('before-quit', () => {
-  // Stop all running game/server processes
-  stopAllGames();
 });
 
