@@ -364,13 +364,18 @@ export async function installUpdate(installerPath: string): Promise<void> {
  */
 export function applyPendingUpdate(): boolean {
   try {
-    const resourcesDir = getResourcesDir();
-    const updatePath = path.join(resourcesDir, UPDATE_FILE_NAME);
-    const appAsarPath = path.join(resourcesDir, 'app.asar');
+    // The update is staged in the persistent userData dir (survives
+    // portable-exe temp dir rotation).  Copy it into the *current*
+    // session's resources dir so Electron loads the new code.
+    const stageDir  = getUpdateStageDir();
+    const updatePath = path.join(stageDir, UPDATE_FILE_NAME);
 
     if (!fs.existsSync(updatePath)) return false;
 
     console.log('[Updater] Found pending update, applying...');
+
+    const resourcesDir = getResourcesDir();
+    const appAsarPath  = path.join(resourcesDir, 'app.asar');
 
     // Backup current app.asar
     const backupPath = path.join(resourcesDir, 'app.asar.backup');
