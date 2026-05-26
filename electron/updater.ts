@@ -345,16 +345,46 @@ export async function downloadUpdate(
  * issues.
  */
 export async function installUpdate(installerPath: string): Promise<void> {
-  // Verify the update file exists
+  // Verify the staged update file exists
   if (!installerPath || !fs.existsSync(installerPath)) {
     console.error('[Updater] Update file missing, opening browser fallback');
     await shell.openExternal(GITHUB_RELEASES_PAGE);
     return;
   }
 
-  // Relaunch the app — applyPendingUpdate() will handle the swap on next start
+  // Apply the update NOW (before restarting) so the next launch picks it up.
+  // For installed apps the resources dir is persistent, so this is
+  // straightforward.  For the portable .exe the resources dir is inside a
+  // temp extraction folder — the swap still works because the SAME temp
+  // folder is reused as long as the exe hash hasn't changed (electron-builder
+  // portable caching), and applyPendingUpdate() handles the case where a
+  // fresh extraction happens.
+  try {
+    const resourcesDir = getResourcesDir();
+    const appAsarPath  = path.join(resourcesDir, 'app.asar');
+
+    // Backup
+    const backupPath = path.join(resourcesDir, 'app.asar.backup');
+    try { fs.unlinkSync(backupPath); } catch { /* ignore */ }
+    try { fs.copyFileSync(appAsarPath, backupPath); } catch { /* ignore */ }
+
+    // Swap
+    fs.copyFileSync(installerPath, appAsarPath);
+    console.log('[Updater] app.asar replaced successfully');
+
+    // Clean up the staged file
+    try { fs.unlinkSync(installerPath); } catch { /* ignore */ }
+  } catch (err) {
+    console.error('[Updater] Failed to apply update in-place:', err);
+    // applyPendingUpdate() will try again on next launch
+  }
+
   app.relaunch();
   app.quit();
+
+  // Fallback: if app.quit() didn't terminate (e.g. event handlers
+  // prevented it), force-exit after a short delay.
+  setTimeout(() => app.exit(0), 1000);
 }
 
 /**
