@@ -3011,8 +3011,15 @@ async function runStartupUpdateCheck(): Promise<void> {
 }
 
 // ─── Apply pending ASAR update before app loads ─────────────────────────────
+// If a staged update is found, swap it into resources/ and immediately
+// relaunch so the *new* code is what Electron actually executes.  Without
+// this relaunch the main-process entry point has already been loaded from
+// the old app.asar.
 
-applyPendingUpdate();
+if (applyPendingUpdate()) {
+  app.relaunch();
+  app.exit(0);
+}
 
 // ─── App lifecycle ───────────────────────────────────────────────────────────
 
