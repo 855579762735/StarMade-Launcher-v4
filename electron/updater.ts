@@ -74,17 +74,31 @@ export interface DownloadProgress {
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function compareSemver(a: string, b: string): -1 | 0 | 1 {
-  const parse = (s: string): [number, number, number] => {
-    const parts = s.replace(/^v/, '').split('.');
+  const parse = (s: string): { major: number; minor: number; patch: number; pre: string } => {
+    const clean = s.replace(/^v/, '');
+    const [corePart, ...preParts] = clean.split('-');
+    const parts = corePart.split('.');
     const nums = parts.map(n => parseInt(n, 10));
     if (nums.some(isNaN)) throw new Error(`Invalid semver: "${s}"`);
-    return [nums[0] ?? 0, nums[1] ?? 0, nums[2] ?? 0];
+    return {
+      major: nums[0] ?? 0,
+      minor: nums[1] ?? 0,
+      patch: nums[2] ?? 0,
+      pre: preParts.join('-'),
+    };
   };
-  const [aMajor, aMinor, aPatch] = parse(a);
-  const [bMajor, bMinor, bPatch] = parse(b);
-  if (aMajor !== bMajor) return aMajor < bMajor ? -1 : 1;
-  if (aMinor !== bMinor) return aMinor < bMinor ? -1 : 1;
-  if (aPatch !== bPatch) return aPatch < bPatch ? -1 : 1;
+  const av = parse(a);
+  const bv = parse(b);
+  if (av.major !== bv.major) return av.major < bv.major ? -1 : 1;
+  if (av.minor !== bv.minor) return av.minor < bv.minor ? -1 : 1;
+  if (av.patch !== bv.patch) return av.patch < bv.patch ? -1 : 1;
+  // A pre-release version has lower precedence than the same version without one.
+  // e.g. 4.2.0-beta.1 < 4.2.0
+  if (av.pre && !bv.pre) return -1;
+  if (!av.pre && bv.pre) return 1;
+  if (av.pre && bv.pre) {
+    return av.pre < bv.pre ? -1 : av.pre > bv.pre ? 1 : 0;
+  }
   return 0;
 }
 
@@ -314,23 +328,23 @@ export async function downloadUpdate(
   // an HTML error page or a JSON API response instead, catch it now
   // rather than crashing on next launch.
   const fd = fs.openSync(destPath, 'r');
+  let firstByte: number;
+  let fileSize: number;
   try {
     const header = Buffer.alloc(16);
     fs.readSync(fd, header, 0, 16, 0);
-    // ASAR header: 4 bytes pickle size, 4 bytes header-string size,
-    // then another pickle containing JSON starting with '{"files"'.
-    // A quick sanity check: the file must not start with '<' (HTML)
-    // or '{' at byte 0 (raw JSON), and must be > 1 KB.
-    const firstByte = header[0];
-    const fileSize = fs.fstatSync(fd).size;
-    if (fileSize < 1024 || firstByte === 0x3C /* < */ || firstByte === 0x7B /* { */) {
-      fs.closeSync(fd);
-      try { fs.unlinkSync(destPath); } catch { /* ignore */ }
-      const preview = fs.existsSync(destPath) ? '' : ` (first byte: 0x${firstByte.toString(16)}, size: ${fileSize})`;
-      throw new Error(`Downloaded file is not a valid ASAR package${preview}`);
-    }
+    firstByte = header[0];
+    fileSize = fs.fstatSync(fd).size;
   } finally {
-    try { fs.closeSync(fd); } catch { /* ignore */ }
+    fs.closeSync(fd);
+  }
+  // ASAR header: 4 bytes pickle size, 4 bytes header-string size,
+  // then another pickle containing JSON starting with '{"files"'.
+  // A quick sanity check: the file must not start with '<' (HTML)
+  // or '{' at byte 0 (raw JSON), and must be > 1 KB.
+  if (fileSize < 1024 || firstByte === 0x3C /* < */ || firstByte === 0x7B /* { */) {
+    try { fs.unlinkSync(destPath); } catch { /* ignore */ }
+    throw new Error(`Downloaded file is not a valid ASAR package (first byte: 0x${firstByte.toString(16)}, size: ${fileSize})`);
   }
 
   return destPath;
@@ -371,13 +385,14 @@ export async function installUpdate(installerPath: string): Promise<void> {
     // Swap
     fs.copyFileSync(installerPath, appAsarPath);
     console.log('[Updater] app.asar replaced successfully');
-
-    // Clean up the staged file
-    try { fs.unlinkSync(installerPath); } catch { /* ignore */ }
   } catch (err) {
     console.error('[Updater] Failed to apply update in-place:', err);
     // applyPendingUpdate() will try again on next launch
   }
+
+  // Always remove the staged file so applyPendingUpdate() doesn't
+  // attempt a redundant (or stale) swap on the next launch.
+  try { fs.unlinkSync(installerPath); } catch { /* ignore */ }
 
   app.relaunch();
   app.quit();
