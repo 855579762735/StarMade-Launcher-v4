@@ -26,7 +26,7 @@ A modern, immersive launcher for [StarMade](https://www.star-made.org/) — the 
 
 ## 📋 Notes
 
-- **Automatic Updating** — The launcher will automatically check for updates and prompt you to download the latest version when available *(Phase 7 - coming soon)*
+- **Automatic Updating** — The launcher will automatically check for updates and prompt you to download the latest version when available
 - **Java Version Switching** — The launcher automatically switches between Java 8 and 21 based on the version of StarMade you're running:
   - StarMade < 0.3 → Java 8
   - StarMade ≥ 0.3 → Java 21 (with required JVM args)

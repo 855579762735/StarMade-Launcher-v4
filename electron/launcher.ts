@@ -9,7 +9,7 @@ import { spawn, ChildProcess } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import { app, shell } from 'electron';
-import { getRequiredJavaVersion, getJvmArgsForJava, resolveJavaPath } from './java.js';
+import { getRequiredJavaVersion, getJvmArgsForJava, MACOS_CLIENT_ARGS, resolveJavaPath } from './java.js';
 import { BrowserWindow } from 'electron';
 import { storeGet, storeSet } from './store.js';
 
@@ -480,6 +480,12 @@ export async function launchGame(options: LaunchOptions): Promise<LaunchResult> 
       `-Xms${minMemory}M`,
       `-Xmx${maxMemory}M`,
     ];
+
+    // macOS + GLFW/LWJGL3 requires -XstartOnFirstThread for client launches.
+    // Only applies to Java 21 versions (>= 0.3xx) that use LWJGL3.
+    if (process.platform === 'darwin' && !isServer && requiredJavaVersion === 21) {
+      jvmArgList.unshift(...MACOS_CLIENT_ARGS);
+    }
 
     // Add custom JVM args if provided
     if (jvmArgs.trim()) {

@@ -25,6 +25,14 @@ export const JAVA_21_ARGS = [
 	'--add-opens=java.base/java.io=ALL-UNNAMED',
 ];
 
+/**
+ * Additional JVM arguments required on macOS for client (non-server) launches.
+ * GLFW/LWJGL3 requires the main thread to be the first thread on macOS.
+ */
+export const MACOS_CLIENT_ARGS = [
+	'-XstartOnFirstThread',
+];
+
 /** Java 8 requires no additional JVM arguments. */
 export const JAVA_8_ARGS: string[] = [];
 
