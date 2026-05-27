@@ -147,4 +147,50 @@ describe('checkForUpdates', () => {
     const { checkForUpdates } = await import('../../electron/updater.js');
     await expect(checkForUpdates({ includePreReleases: true })).rejects.toThrow();
   });
+
+  it('offers stable release to user on pre-release of same version', async () => {
+    // User is on 4.0.0-beta.1, stable 4.0.0 is available
+    const { app } = await import('electron');
+    vi.mocked(app.getVersion).mockReturnValue('4.0.0-beta.1');
+
+    global.fetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: async () => makeRelease('v4.0.0'),
+    } as Response);
+
+    const { checkForUpdates } = await import('../../electron/updater.js');
+    const result = await checkForUpdates();
+
+    expect(result.available).toBe(true);
+    expect(result.latestVersion).toBe('4.0.0');
+  });
+
+  it('orders pre-release tags lexicographically', async () => {
+    const { app } = await import('electron');
+    vi.mocked(app.getVersion).mockReturnValue('4.1.0-alpha.1');
+
+    global.fetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: async () => makeRelease('v4.1.0-beta.1'),
+    } as Response);
+
+    const { checkForUpdates } = await import('../../electron/updater.js');
+    const result = await checkForUpdates();
+
+    expect(result.available).toBe(true);
+    expect(result.latestVersion).toBe('4.1.0-beta.1');
+  });
+
+  it('does not offer older pre-release when on stable', async () => {
+    global.fetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: async () => [makeRelease('v4.0.0-rc.1', true)],
+    } as Response);
+
+    const { checkForUpdates } = await import('../../electron/updater.js');
+    const result = await checkForUpdates({ includePreReleases: true });
+
+    // 4.0.0-rc.1 < 4.0.0, so should not be offered
+    expect(result.available).toBe(false);
+  });
 });
