@@ -279,9 +279,9 @@ const InstallationForm: React.FC<InstallationFormProps> = ({ item, isNew, onSave
 
       // Resolve Java paths (with installation-defaults fallback for servers)
       const { javaPath8, javaPath21 } = await resolveJavaPaths(itemTypeName);
-      if (requiredJavaVersion === 21 && javaPath21) {
+      if (requiredJavaVersion === 21) {
         setJavaPath(javaPath21);
-      } else if (requiredJavaVersion === 8 && javaPath8) {
+      } else if (requiredJavaVersion === 8) {
         setJavaPath(javaPath8);
       }
 
@@ -305,9 +305,9 @@ const InstallationForm: React.FC<InstallationFormProps> = ({ item, isNew, onSave
       // Auto-switch Java path to match the new branch's version requirement
       if (first.requiredJavaVersion) {
         resolveJavaPaths(itemTypeName).then(({ javaPath8, javaPath21 }) => {
-          if (first.requiredJavaVersion === 21 && javaPath21) {
+          if (first.requiredJavaVersion === 21) {
             setJavaPath(javaPath21);
-          } else if (first.requiredJavaVersion === 8 && javaPath8) {
+          } else if (first.requiredJavaVersion === 8) {
             setJavaPath(javaPath8);
           }
         }).catch(() => {});
@@ -325,9 +325,9 @@ const InstallationForm: React.FC<InstallationFormProps> = ({ item, isNew, onSave
     // Auto-switch Java path to match the new version's requirement
     if (entry?.requiredJavaVersion) {
       resolveJavaPaths(itemTypeName).then(({ javaPath8, javaPath21 }) => {
-        if (entry.requiredJavaVersion === 21 && javaPath21) {
+        if (entry.requiredJavaVersion === 21) {
           setJavaPath(javaPath21);
-        } else if (entry.requiredJavaVersion === 8 && javaPath8) {
+        } else if (entry.requiredJavaVersion === 8) {
           setJavaPath(javaPath8);
         }
       }).catch(() => {});
@@ -350,9 +350,9 @@ const InstallationForm: React.FC<InstallationFormProps> = ({ item, isNew, onSave
     }
 
     resolveJavaPaths(itemTypeName).then(({ javaPath8, javaPath21 }) => {
-      if (requiredJavaVersion === 21 && javaPath21) {
+      if (requiredJavaVersion === 21) {
         setJavaPath(javaPath21);
-      } else if (requiredJavaVersion === 8 && javaPath8) {
+      } else if (requiredJavaVersion === 8) {
         setJavaPath(javaPath8);
       }
     }).catch((error) => {
