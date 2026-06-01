@@ -289,7 +289,6 @@ export type InstallationsTab = 'installations' | 'servers';
 export type PageProps =
     | { initialSection?: SettingsSection }
     | { initialTab?: InstallationsTab }
-    | { editInstallationId?: string; targetVersion?: string }
     | { serverId?: string; serverName?: string }
     | {};
 

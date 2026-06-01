@@ -44,7 +44,7 @@ const makeTimestamp = (): string => {
 };
 
 const Mods: React.FC = () => {
-  const { installations, selectedInstallationId } = useData();
+  const { installations, servers, selectedInstallationId } = useData();
   const [selectedInstanceId, setSelectedInstanceId] = useState<string | null>(selectedInstallationId);
   const [modsDir, setModsDir] = useState('');
   const [mods, setMods] = useState<ModRecord[]>([]);
@@ -69,11 +69,11 @@ const Mods: React.FC = () => {
 
   const instances = useMemo(() => {
     const deduped = new Map<string, ManagedItem>();
-    installations
-      .filter((item) => item.path?.trim().length > 0)
+    [...installations, ...servers]
+      .filter((item) => item.path?.trim().length > 0 && !item.isRemote)
       .forEach((item) => deduped.set(item.id, item));
     return Array.from(deduped.values());
-  }, [installations]);
+  }, [installations, servers]);
 
   useEffect(() => {
     if (selectedInstanceId && instances.some((instance) => instance.id === selectedInstanceId)) return;
@@ -356,17 +356,21 @@ const Mods: React.FC = () => {
           {/* ── LEFT: installation picker + SMD browser + modpack ── */}
           <div className="flex flex-col gap-3 min-h-0">
 
-            {/* Installation selector */}
+            {/* Installation / server selector */}
             <div>
-              <p className="text-xs uppercase tracking-wider text-gray-400 mb-2">Installation</p>
+              <p className="text-xs uppercase tracking-wider text-gray-400 mb-2">Installation / Server</p>
               {instances.length > 0 ? (
                 <CustomDropdown
-                  options={instances.map((instance) => ({ value: instance.id, label: `${instance.name} (${instance.version})` }))}
+                  options={instances.map((instance) => {
+                    const isServer = servers.some((s) => s.id === instance.id);
+                    const tag = isServer ? 'Server' : instance.version;
+                    return { value: instance.id, label: `${instance.name} (${tag})` };
+                  })}
                   value={selectedInstanceId ?? instances[0].id}
                   onChange={(value) => setSelectedInstanceId(value)}
                 />
               ) : (
-                <p className="text-sm text-gray-300">No installations with a valid path were found.</p>
+                <p className="text-sm text-gray-300">No installations or servers with a valid path were found.</p>
               )}
             </div>
 

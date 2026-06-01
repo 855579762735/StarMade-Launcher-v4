@@ -177,9 +177,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
                 // Pass the active account id so the main process can inject the
                 // registry auth token as a -auth <token> argument to the game.
                 activeAccountId: activeAccount?.id,
-                // Session-specific direct-connect args (from a pinned / last-played session).
-                uplink: sessionArgs?.uplink,
-                uplinkPort: sessionArgs?.uplinkPort,
+                // Direct-connect args: prefer session-specific overrides, fall back
+                // to the installation's own serverIp/port (for server entries).
+                uplink: sessionArgs?.uplink ?? installation.serverIp,
+                uplinkPort: sessionArgs?.uplinkPort ?? (installation.port ? parseInt(installation.port, 10) : undefined),
                 modIds: sessionArgs?.modIds,
             });
 
@@ -191,9 +192,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
                 // (installationId + serverAddress + serverPort + modIds) so that
                 // repeated launches of the same target update the existing record
                 // rather than creating a new one, preserving pin/unpin identity.
-                const serverAddress = sessionArgs?.uplink ?? 'localhost';
-                const serverPort    = sessionArgs?.uplinkPort ?? 4242;
+                const serverAddress = sessionArgs?.uplink ?? installation.serverIp ?? 'localhost';
+                const serverPort    = sessionArgs?.uplinkPort
+                    ?? (installation.port ? parseInt(installation.port, 10) : undefined)
+                    ?? 4242;
                 const modIds        = sessionArgs?.modIds;
+                const isMultiplayer = serverAddress !== 'localhost' && serverAddress !== '';
                 const stableId = [
                     installation.id,
                     serverAddress,
@@ -206,9 +210,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
                     installationName: installation.name,
                     installationPath: installation.path,
                     installationVersion: installation.version,
-                    sessionType: sessionArgs?.uplink && sessionArgs.uplink !== 'localhost'
-                        ? 'multiplayer'
-                        : 'singleplayer',
+                    sessionType: isMultiplayer ? 'multiplayer' : 'singleplayer',
                     serverAddress,
                     serverPort,
                     modIds,

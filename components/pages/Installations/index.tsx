@@ -13,11 +13,9 @@ import { formatPlayTime } from '../../../utils/formatPlayTime';
 
 interface InstallationsProps {
   initialTab?: InstallationsTab;
-  editInstallationId?: string;
-  targetVersion?: string;
 }
 
-const Installations: React.FC<InstallationsProps> = ({ initialTab, editInstallationId, targetVersion }) => {
+const Installations: React.FC<InstallationsProps> = ({ initialTab }) => {
     const [activeTab, setActiveTab] = useState<InstallationsTab>(initialTab || 'installations');
     
     const [view, setView] = useState<'list' | 'form'>('list');
@@ -67,17 +65,6 @@ const [deleteTarget, setDeleteTarget] = useState<ManagedItem | null>(null);
         setActiveItem(null);
         clearPageProps();
     }, [initialTab, clearPageProps]);
-
-    useEffect(() => {
-        if (!editInstallationId) return;
-        const item = installations.find(i => i.id === editInstallationId);
-        if (!item) { clearPageProps(); return; }
-        setActiveTab('installations');
-        setActiveItem(targetVersion ? { ...item, version: targetVersion } : item);
-        setIsNew(false);
-        setView('form');
-        clearPageProps();
-    }, [editInstallationId, targetVersion, installations, clearPageProps]);
 
     const { items, itemTypeName, cardActionButtonText, cardStatusLabel } = activeTab === 'installations' 
     ? { 
