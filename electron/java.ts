@@ -90,7 +90,9 @@ function getAdoptiumUrl(version: 8 | 21): string {
 	const platform = process.platform === 'win32' ? 'windows'
 		: process.platform === 'darwin' ? 'mac'
 			: 'linux';
-	const arch = process.arch === 'arm64' ? 'aarch64' : 'x64';
+	// Adoptium has no Java 8 aarch64 build for macOS; use x64 via Rosetta 2.
+	const arch = (process.arch === 'arm64' && !(platform === 'mac' && version === 8))
+		? 'aarch64' : 'x64';
 
 	return `https://api.adoptium.net/v3/binary/latest/${version}/ga/${platform}/${arch}/jre/hotspot/normal/eclipse`;
 }
