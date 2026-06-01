@@ -286,9 +286,10 @@ export type Page = 'Play' | 'Installations' | 'News' | 'Screenshots' | 'Mods' | 
 export type SettingsSection = 'launcher' | 'accounts' | 'about' | 'defaults';
 export type InstallationsTab = 'installations' | 'servers';
 
-export type PageProps = 
-    | { initialSection?: SettingsSection } 
+export type PageProps =
+    | { initialSection?: SettingsSection }
     | { initialTab?: InstallationsTab }
+    | { editInstallationId?: string; targetVersion?: string }
     | { serverId?: string; serverName?: string }
     | {};
 

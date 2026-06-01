@@ -940,7 +940,18 @@ export async function importModpackFromFile(options: {
   let skippedCount = 0;
   const failures: string[] = [];
 
+  const existingMods = listModsForInstallation(installationPath, launcherDir, metadataStore);
+  const installedUrls = new Set(
+    existingMods.mods
+      .map(m => m.downloadUrl)
+      .filter((url): url is string => typeof url === 'string'),
+  );
+
   for (const entry of manifest.entries) {
+    if (installedUrls.has(entry.downloadUrl)) {
+      skippedCount += 1;
+      continue;
+    }
     try {
       await downloadModForInstallation({
         installationPath,
@@ -955,8 +966,6 @@ export async function importModpackFromFile(options: {
       failures.push(`${entry.name}: ${toErrorMessage(error)}`);
     }
   }
-
-  if (manifest.entries.length === 0) skippedCount += 1;
 
   return {
     downloadedCount,

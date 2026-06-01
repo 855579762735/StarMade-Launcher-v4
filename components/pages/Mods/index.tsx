@@ -54,7 +54,6 @@ const Mods: React.FC = () => {
   const [isBusy, setIsBusy] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingSmd, setIsLoadingSmd] = useState(false);
-  const [isCheckingUpdates, setIsCheckingUpdates] = useState(false);
   const [activeSmdResourceId, setActiveSmdResourceId] = useState<number | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -181,7 +180,6 @@ const Mods: React.FC = () => {
       return;
     }
 
-    setIsCheckingUpdates(true);
     try {
       const result = await launcher.mods.checkSmdUpdates(installed);
       if (!result.success) {
@@ -194,8 +192,8 @@ const Mods: React.FC = () => {
         mapped[item.resourceId] = item;
       }
       setUpdatesByResourceId(mapped);
-    } finally {
-      setIsCheckingUpdates(false);
+    } catch {
+      // Update check is best-effort; errors are non-blocking.
     }
   }, [launcher, mods]);
 
@@ -273,7 +271,8 @@ const Mods: React.FC = () => {
     if (!targetDir) return;
 
     const safePackName = selectedInstance.name.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'modpack';
-    const outputPath = `${targetDir}${targetDir.endsWith('\\') ? '' : '\\'}${safePackName}-${makeTimestamp()}.starmade-modpack.json`;
+    const sep = targetDir.includes('\\') ? '\\' : '/';
+    const outputPath = `${targetDir}${targetDir.endsWith(sep) ? '' : sep}${safePackName}-${makeTimestamp()}.starmade-modpack.json`;
 
     await withBusyAction(async () => {
       const result = await launcher.mods.exportModpack(selectedInstance.path, outputPath, {
@@ -302,7 +301,13 @@ const Mods: React.FC = () => {
       if (!result.success) {
         throw new Error(result.error ?? 'Failed to import modpack.');
       }
-      setStatus(`Imported modpack: ${result.downloadedCount} downloaded, ${result.skippedCount} skipped, ${result.failedCount} failed.`);
+      const parts = [`${result.downloadedCount} downloaded`];
+      if (result.skippedCount) parts.push(`${result.skippedCount} already installed`);
+      if (result.failedCount) parts.push(`${result.failedCount} failed`);
+      setStatus(`Imported modpack: ${parts.join(', ')}.`);
+      if (result.failures?.length) {
+        setError(`Failed mods:\n${result.failures.join('\n')}`);
+      }
       await loadMods();
     });
   }, [launcher, loadMods, selectedInstance, withBusyAction]);
@@ -333,19 +338,6 @@ const Mods: React.FC = () => {
             </button>
             <button
               type="button"
-              onClick={() => void checkInstalledUpdates()}
-              className="inline-flex min-w-[12rem] items-center justify-center gap-2 px-3 py-2 rounded-md border border-slate-700 bg-slate-900/70 hover:bg-slate-800/80 text-sm whitespace-nowrap"
-              disabled={isBusy || isCheckingUpdates}
-            >
-              {isCheckingUpdates ? (
-                <>
-                  <span className="h-4 w-4 animate-spin rounded-full border border-slate-300 border-t-transparent" />
-                  Checking Updates…
-                </>
-              ) : 'Check Mod Updates'}
-            </button>
-            <button
-              type="button"
               onClick={() => void openModsFolder()}
               className="px-3 py-2 rounded-md border border-slate-700 bg-slate-900/70 hover:bg-slate-800/80 text-sm"
               disabled={!modsDir}
@@ -355,7 +347,7 @@ const Mods: React.FC = () => {
           </div>
         </div>
 
-        {error && <p className="text-sm text-red-300">{error}</p>}
+        {error && <pre className="text-sm text-red-300 whitespace-pre-wrap">{error}</pre>}
         {status && <p className="text-sm text-emerald-300">{status}</p>}
 
         {/* ── Main two-column area ── */}

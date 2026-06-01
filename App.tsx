@@ -340,7 +340,10 @@ const App: React.FC = () => {
 
     switch (activePage) {
       case 'Installations': {
-        const installationProps = 'initialTab' in pageProps ? pageProps : {};
+        const installationProps =
+          'editInstallationId' in pageProps ? pageProps
+          : 'initialTab' in pageProps ? pageProps
+          : {};
         return <Installations {...installationProps} />;
       }
       case 'News':

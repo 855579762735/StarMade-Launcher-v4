@@ -45,7 +45,10 @@ const GameUpdateNotice: React.FC = () => {
   if (!availableUpdate || dismissed) return null;
 
   const handleUpdate = () => {
-    navigate('Installations');
+    navigate('Installations', {
+      editInstallationId: selectedInstallation!.id,
+      targetVersion: availableUpdate.to,
+    });
   };
 
   const handleIgnore = async () => {
