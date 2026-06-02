@@ -17,6 +17,7 @@
  */
 
 import { app, shell } from 'electron';
+import { spawn } from 'child_process';
 import https from 'https';
 import http  from 'http';
 // Use original-fs to bypass Electron's ASAR interception.
@@ -42,6 +43,8 @@ const TIMEOUT_MS = 30_000;
 
 const ASAR_ASSET_NAME = 'app.asar';
 const UPDATE_FILE_NAME = 'app_update.asar';
+/** Staged filename for the Windows portable .exe update (see installUpdateWindows). */
+const UPDATE_EXE_NAME  = 'app_update.exe';
 
 /**
  * Persistent directory for storing the downloaded update between launches.
@@ -259,17 +262,30 @@ export async function checkForUpdates(
 
   if (Array.isArray(release.assets)) {
     const assets = release.assets as Array<{ name: string; browser_download_url: string }>;
-    // Prefer the app.asar asset for silent update
-    const asarAsset = findAsarAsset(assets);
-    if (asarAsset) {
-      assetUrl  = asarAsset.browser_download_url;
-      assetName = asarAsset.name;
+
+    if (process.platform === 'win32') {
+      // Windows ships as a portable .exe.  The app.asar swap cannot work here:
+      // the asar is baked inside the running (locked) .exe, and the resources
+      // dir is an ephemeral temp extraction that's discarded on exit.  So we
+      // update the .exe itself via installUpdateWindows().
+      const exeAsset = findPlatformAsset(assets);
+      if (exeAsset) {
+        assetUrl  = exeAsset.browser_download_url;
+        assetName = exeAsset.name;
+      }
     } else {
-      // Fallback to platform installer (user will get "Open in Browser")
-      const platformAsset = findPlatformAsset(assets);
-      if (platformAsset) {
-        assetUrl  = platformAsset.browser_download_url;
-        assetName = platformAsset.name;
+      // macOS / Linux: swap the platform-independent app.asar for a silent update.
+      const asarAsset = findAsarAsset(assets);
+      if (asarAsset) {
+        assetUrl  = asarAsset.browser_download_url;
+        assetName = asarAsset.name;
+      } else {
+        // Fallback to platform installer (user will get "Open in Browser")
+        const platformAsset = findPlatformAsset(assets);
+        if (platformAsset) {
+          assetUrl  = platformAsset.browser_download_url;
+          assetName = platformAsset.name;
+        }
       }
     }
   }
@@ -294,11 +310,12 @@ export async function checkForUpdates(
  */
 export async function downloadUpdate(
   assetUrl: string,
-  _assetName: string,
+  assetName: string,
   onProgress: (progress: DownloadProgress) => void
 ): Promise<string> {
   const stageDir = getUpdateStageDir();
-  const destPath = path.join(stageDir, UPDATE_FILE_NAME);
+  const isExe    = /\.exe$/i.test(assetName);
+  const destPath = path.join(stageDir, isExe ? UPDATE_EXE_NAME : UPDATE_FILE_NAME);
 
   // Remove a stale partial download if present
   try { fs.unlinkSync(destPath); } catch { /* ignore */ }
@@ -338,13 +355,22 @@ export async function downloadUpdate(
   } finally {
     fs.closeSync(fd);
   }
-  // ASAR header: 4 bytes pickle size, 4 bytes header-string size,
-  // then another pickle containing JSON starting with '{"files"'.
-  // A quick sanity check: the file must not start with '<' (HTML)
-  // or '{' at byte 0 (raw JSON), and must be > 1 KB.
-  if (fileSize < 1024 || firstByte === 0x3C /* < */ || firstByte === 0x7B /* { */) {
-    try { fs.unlinkSync(destPath); } catch { /* ignore */ }
-    throw new Error(`Downloaded file is not a valid ASAR package (first byte: 0x${firstByte.toString(16)}, size: ${fileSize})`);
+  if (isExe) {
+    // Windows PE executables start with the 'MZ' magic (0x4D 0x5A).  Reject
+    // an HTML error page or JSON API response that slipped through.
+    if (fileSize < 1024 || firstByte !== 0x4D /* M */) {
+      try { fs.unlinkSync(destPath); } catch { /* ignore */ }
+      throw new Error(`Downloaded file is not a valid Windows executable (first byte: 0x${firstByte.toString(16)}, size: ${fileSize})`);
+    }
+  } else {
+    // ASAR header: 4 bytes pickle size, 4 bytes header-string size,
+    // then another pickle containing JSON starting with '{"files"'.
+    // A quick sanity check: the file must not start with '<' (HTML)
+    // or '{' at byte 0 (raw JSON), and must be > 1 KB.
+    if (fileSize < 1024 || firstByte === 0x3C /* < */ || firstByte === 0x7B /* { */) {
+      try { fs.unlinkSync(destPath); } catch { /* ignore */ }
+      throw new Error(`Downloaded file is not a valid ASAR package (first byte: 0x${firstByte.toString(16)}, size: ${fileSize})`);
+    }
   }
 
   return destPath;
@@ -366,13 +392,18 @@ export async function installUpdate(installerPath: string): Promise<void> {
     return;
   }
 
-  // Apply the update NOW (before restarting) so the next launch picks it up.
-  // For installed apps the resources dir is persistent, so this is
-  // straightforward.  For the portable .exe the resources dir is inside a
-  // temp extraction folder — the swap still works because the SAME temp
-  // folder is reused as long as the exe hash hasn't changed (electron-builder
-  // portable caching), and applyPendingUpdate() handles the case where a
-  // fresh extraction happens.
+  // Windows ships portable, so the ASAR swap can't work (the asar lives inside
+  // the locked, in-use .exe and the resources dir is a throwaway temp folder).
+  // Replace the .exe itself via a detached helper instead.
+  if (process.platform === 'win32') {
+    installUpdateWindows(installerPath);
+    return;
+  }
+
+  // ── macOS / Linux: swap app.asar in place ──────────────────────────────────
+  // The resources dir is persistent and Unix permits replacing an open file,
+  // so the copy succeeds while the app is still running.
+  let swapped = false;
   try {
     const resourcesDir = getResourcesDir();
     const appAsarPath  = path.join(resourcesDir, 'app.asar');
@@ -384,21 +415,91 @@ export async function installUpdate(installerPath: string): Promise<void> {
 
     // Swap
     fs.copyFileSync(installerPath, appAsarPath);
+    swapped = true;
     console.log('[Updater] app.asar replaced successfully');
   } catch (err) {
     console.error('[Updater] Failed to apply update in-place:', err);
-    // applyPendingUpdate() will try again on next launch
+    // Leave the staged file in place so applyPendingUpdate() retries next launch.
   }
 
-  // Always remove the staged file so applyPendingUpdate() doesn't
-  // attempt a redundant (or stale) swap on the next launch.
-  try { fs.unlinkSync(installerPath); } catch { /* ignore */ }
+  // Only remove the staged file once it has actually been applied — otherwise
+  // keep it so the next-launch fallback (applyPendingUpdate) can recover.
+  if (swapped) {
+    try { fs.unlinkSync(installerPath); } catch { /* ignore */ }
+  }
 
   app.relaunch();
   app.quit();
 
   // Fallback: if app.quit() didn't terminate (e.g. event handlers
   // prevented it), force-exit after a short delay.
+  setTimeout(() => app.exit(0), 1000);
+}
+
+/**
+ * Apply a Windows portable update by replacing the original `.exe`.
+ *
+ * The running app holds a lock on its own portable `.exe`, and the live
+ * `app.asar` lives inside a temp extraction that's discarded on exit — so the
+ * swap cannot be done from this process.  Instead we write a small detached
+ * batch helper that:
+ *   1. retries copying the downloaded `.exe` over the original portable `.exe`
+ *      until the lock is released (i.e. this process has fully exited),
+ *   2. relaunches the freshly-replaced `.exe`,
+ *   3. cleans up the staged download and deletes itself.
+ *
+ * Both the staged `.exe` and the helper `.bat` live in the persistent userData
+ * dir so they survive the portable temp-dir teardown.
+ */
+function installUpdateWindows(newExePath: string): void {
+  // The user-facing portable .exe — NOT process.execPath, which points at the
+  // throwaway temp extraction.  electron-builder's portable target exposes it.
+  const targetExe = process.env.PORTABLE_EXECUTABLE_FILE || process.execPath;
+
+  const stageDir = getUpdateStageDir();
+  const batPath  = path.join(stageDir, 'sm-launcher-update.bat');
+
+  // Poll up to ~2 minutes (120 × ~1s) for the lock to release before giving up
+  // and relaunching whatever is on disk.  Paths are quoted to tolerate spaces.
+  const script = [
+    '@echo off',
+    'setlocal',
+    `set "SRC=${newExePath}"`,
+    `set "DEST=${targetExe}"`,
+    'set /a tries=0',
+    ':retry',
+    'copy /Y "%SRC%" "%DEST%" >nul 2>&1',
+    'if not errorlevel 1 goto done',
+    'set /a tries+=1',
+    'if %tries% geq 120 goto launch',
+    'ping -n 2 127.0.0.1 >nul',
+    'goto retry',
+    ':done',
+    'del /Q "%SRC%" >nul 2>&1',
+    ':launch',
+    'start "" "%DEST%"',
+    'del /Q "%~f0" >nul 2>&1',
+    '',
+  ].join('\r\n');
+
+  try {
+    fs.writeFileSync(batPath, script, 'utf8');
+  } catch (err) {
+    console.error('[Updater] Failed to write Windows update helper:', err);
+    void shell.openExternal(GITHUB_RELEASES_PAGE);
+    return;
+  }
+
+  const child = spawn('cmd.exe', ['/c', batPath], {
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: true,
+  });
+  child.unref();
+
+  // Quit (do NOT relaunch here — the helper relaunches the replaced .exe once
+  // this process exits and the lock is released).
+  app.quit();
   setTimeout(() => app.exit(0), 1000);
 }
 

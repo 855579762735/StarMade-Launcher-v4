@@ -23,8 +23,31 @@ function makeRelease(tag: string, prerelease = false, draft = false) {
     prerelease,
     draft,
     body: `Release notes for ${tag}`,
-    assets: [],
+    assets: [] as Array<{ name: string; browser_download_url: string }>,
   };
+}
+
+/** Build a release whose assets mirror the real release workflow output. */
+function makeReleaseWithAssets(tag: string) {
+  const release = makeRelease(tag);
+  release.assets = [
+    { name: 'StarMade-Launcher.exe',          browser_download_url: 'https://example.com/StarMade-Launcher.exe' },
+    { name: 'StarMade-Launcher-macOS-x64.dmg', browser_download_url: 'https://example.com/launcher.dmg' },
+    { name: 'StarMade-Launcher.AppImage',      browser_download_url: 'https://example.com/launcher.AppImage' },
+    { name: 'app.asar',                        browser_download_url: 'https://example.com/app.asar' },
+  ];
+  return release;
+}
+
+/** Temporarily override process.platform for a test body. */
+async function withPlatform<T>(platform: NodeJS.Platform, fn: () => Promise<T>): Promise<T> {
+  const original = Object.getOwnPropertyDescriptor(process, 'platform');
+  Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+  try {
+    return await fn();
+  } finally {
+    if (original) Object.defineProperty(process, 'platform', original);
+  }
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -192,5 +215,53 @@ describe('checkForUpdates', () => {
 
     // 4.0.0-rc.1 < 4.0.0, so should not be offered
     expect(result.available).toBe(false);
+  });
+
+  describe('asset selection by platform', () => {
+    it('picks the .exe asset on Windows (portable can\'t use app.asar swap)', async () => {
+      await withPlatform('win32', async () => {
+        global.fetch = vi.fn().mockResolvedValueOnce({
+          ok: true,
+          json: async () => makeReleaseWithAssets('v4.1.0'),
+        } as Response);
+
+        const { checkForUpdates } = await import('../../electron/updater.js');
+        const result = await checkForUpdates();
+
+        expect(result.assetName).toBe('StarMade-Launcher.exe');
+        expect(result.assetUrl).toContain('StarMade-Launcher.exe');
+      });
+    });
+
+    it('prefers app.asar on macOS/Linux for a silent swap', async () => {
+      await withPlatform('linux', async () => {
+        global.fetch = vi.fn().mockResolvedValueOnce({
+          ok: true,
+          json: async () => makeReleaseWithAssets('v4.1.0'),
+        } as Response);
+
+        const { checkForUpdates } = await import('../../electron/updater.js');
+        const result = await checkForUpdates();
+
+        expect(result.assetName).toBe('app.asar');
+      });
+    });
+
+    it('falls back to the platform installer on macOS/Linux when app.asar is absent', async () => {
+      await withPlatform('darwin', async () => {
+        const release = makeReleaseWithAssets('v4.1.0');
+        release.assets = release.assets.filter((a) => a.name !== 'app.asar');
+
+        global.fetch = vi.fn().mockResolvedValueOnce({
+          ok: true,
+          json: async () => release,
+        } as Response);
+
+        const { checkForUpdates } = await import('../../electron/updater.js');
+        const result = await checkForUpdates();
+
+        expect(result.assetName).toBe('StarMade-Launcher-macOS-x64.dmg');
+      });
+    });
   });
 });
