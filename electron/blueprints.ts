@@ -160,14 +160,6 @@ function parseBlueprintHeader(headerPath: string): {
   return result;
 }
 
-// ─── Ensure Subdirectories ───────────────────────────────────────────────────
-
-async function ensureCatalogDirs(catalogPath: string): Promise<void> {
-  await fsp.mkdir(path.join(catalogPath, BLUEPRINTS_DIR), { recursive: true });
-  await fsp.mkdir(path.join(catalogPath, EXPORTED_DIR), { recursive: true });
-  await fsp.mkdir(path.join(catalogPath, TEMPLATES_DIR), { recursive: true });
-}
-
 // ─── Cache ───────────────────────────────────────────────────────────────────
 // In-memory cache keyed by directory path. Invalidated after mutations or when
 // the caller passes `invalidate: true`.
@@ -283,7 +275,10 @@ export async function listCatalog(catalogPath: string, invalidate = false): Prom
     if (cached && Date.now() - cached.cachedAt < CACHE_TTL_MS) return cached.listing;
   }
 
-  await ensureCatalogDirs(catalogPath);
+  // Don't eagerly create subdirectories — scanning a missing dir yields []. This
+  // lets a blueprints catalog and a templates catalog live at unrelated paths
+  // without each one spawning the other's folder. Subdirs are created on demand
+  // only when something is actually written into them (import/deploy/export).
   const [blueprints, exported, templates] = await Promise.all([
     scanBlueprints(catalogPath),
     scanExported(catalogPath),
@@ -357,9 +352,9 @@ export function importToCatalog(
   catalogPath: string,
   overwrite: boolean,
 ): CatalogCopyResult {
-  fs.mkdirSync(path.join(catalogPath, BLUEPRINTS_DIR), { recursive: true });
-  fs.mkdirSync(path.join(catalogPath, EXPORTED_DIR), { recursive: true });
-  fs.mkdirSync(path.join(catalogPath, TEMPLATES_DIR), { recursive: true });
+  // Each item creates its own parent dir below (via path.dirname(dst)), so we
+  // only ever materialise the subdir a copied item actually lands in — importing
+  // blueprints won't spawn an empty templates/ folder, and vice versa.
   let copiedCount = 0;
   let skippedCount = 0;
   const errors: string[] = [];
@@ -420,14 +415,36 @@ export function importSmentToCatalog(
   const errors: string[] = [];
   let copiedCount = 0;
 
-  const baseName = path.basename(smentFilePath, '.sment');
-  const bpDest = path.join(catalogPath, BLUEPRINTS_DIR, baseName);
+  const bpRoot = path.join(catalogPath, BLUEPRINTS_DIR);
   const expDest = path.join(catalogPath, EXPORTED_DIR, path.basename(smentFilePath));
 
   try {
-    fs.mkdirSync(bpDest, { recursive: true });
     const zip = new AdmZip(smentFilePath);
-    zip.extractAllTo(bpDest, true);
+    const entries = zip.getEntries();
+
+    // A StarMade .sment is a ZIP whose entries live under a single top-level
+    // folder named after the blueprint (e.g. "My Ship/header.smbph"). Detect
+    // that wrapping folder so we extract into blueprints/<name>/ rather than
+    // double-nesting as blueprints/<file>/<name>/. Fall back to the file name
+    // for legacy/flat archives that store the blueprint files at the root.
+    const topLevels = new Set<string>();
+    let hasRootHeader = false;
+    for (const entry of entries) {
+      const norm = entry.entryName.replace(/\\/g, '/').replace(/^\/+/, '');
+      const seg = norm.split('/')[0];
+      if (seg) topLevels.add(seg);
+      if (norm === HEADER_FILE) hasRootHeader = true;
+    }
+
+    if (!hasRootHeader && topLevels.size === 1) {
+      // Wrapped: extract into the blueprints root, the zip provides the folder.
+      zip.extractAllTo(bpRoot, true);
+    } else {
+      // Flat archive: nest under a folder named after the .sment file.
+      const bpDest = path.join(bpRoot, path.basename(smentFilePath, '.sment'));
+      fs.mkdirSync(bpDest, { recursive: true });
+      zip.extractAllTo(bpDest, true);
+    }
     copiedCount++;
   } catch (err) {
     errors.push(`Failed to extract ${smentFilePath}: ${String(err)}`);
@@ -442,6 +459,44 @@ export function importSmentToCatalog(
 
   invalidateCatalogCache(catalogPath);
   return { success: errors.length === 0, copiedCount, errors: errors.length ? errors : undefined };
+}
+
+// ─── Export .sment ─────────────────────────────────────────────────────────
+
+/**
+ * Export a blueprint directory to a StarMade-compatible `.sment` file.
+ *
+ * The archive wraps the blueprint's contents in a single top-level folder named
+ * after the blueprint (matching how StarMade itself writes .sment files), so the
+ * result re-imports cleanly both here and in-game.
+ */
+export function exportBlueprintToSment(
+  rootPath: string,
+  blueprintName: string,
+  destDir: string,
+): { success: boolean; filePath?: string; error?: string } {
+  try {
+    const srcDir = path.join(rootPath, BLUEPRINTS_DIR, blueprintName);
+    if (!fs.existsSync(srcDir) || !fs.statSync(srcDir).isDirectory()) {
+      return { success: false, error: `Blueprint not found: ${blueprintName}` };
+    }
+
+    fs.mkdirSync(destDir, { recursive: true });
+    const destPath = path.join(destDir, `${blueprintName}.sment`);
+
+    const zip = new AdmZip();
+    // Place files under a top-level folder named after the blueprint, skipping
+    // macOS metadata junk that would otherwise leak into the archive.
+    zip.addLocalFolder(srcDir, blueprintName, (entryPath: string) => {
+      const base = path.basename(entryPath);
+      return base !== '.DS_Store' && !base.startsWith('._');
+    });
+    zip.writeZip(destPath);
+
+    return { success: true, filePath: destPath };
+  } catch (err) {
+    return { success: false, error: String(err) };
+  }
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -542,10 +597,8 @@ export async function importWithProgress(
   overwrite: boolean,
   onProgress?: (progress: SyncProgress) => void,
 ): Promise<CatalogCopyResult> {
-  await fsp.mkdir(path.join(catalogPath, BLUEPRINTS_DIR), { recursive: true });
-  await fsp.mkdir(path.join(catalogPath, EXPORTED_DIR), { recursive: true });
-  await fsp.mkdir(path.join(catalogPath, TEMPLATES_DIR), { recursive: true });
-
+  // Subdirs are created per-item below, so importing only blueprints won't also
+  // create an empty templates/ folder (and vice versa).
   let copiedCount = 0;
   let skippedCount = 0;
   const errors: string[] = [];

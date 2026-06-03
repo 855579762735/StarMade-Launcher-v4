@@ -45,6 +45,7 @@ import {
   importToCatalog,
   deleteCatalogItem,
   importSmentToCatalog,
+  exportBlueprintToSment,
   computeSyncDiff,
   deployWithProgress,
   importWithProgress,
@@ -1502,7 +1503,7 @@ ipcMain.handle(IPC.DIALOG_OPEN_FOLDER, async (_event, defaultPath?: string) => {
   return result.filePaths[0];
 });
 
-ipcMain.handle(IPC.DIALOG_OPEN_FILE, async (_event, defaultPath?: string, type?: 'image' | 'java' | 'modpack') => {
+ipcMain.handle(IPC.DIALOG_OPEN_FILE, async (_event, defaultPath?: string, type?: 'image' | 'java' | 'modpack' | 'sment') => {
   const imageFilters = [
     { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'ico'] },
     { name: 'All Files', extensions: ['*'] },
@@ -1516,11 +1517,21 @@ ipcMain.handle(IPC.DIALOG_OPEN_FILE, async (_event, defaultPath?: string, type?:
     { name: 'JSON', extensions: ['json'] },
     { name: 'All Files', extensions: ['*'] },
   ];
+  const smentFilters = [
+    { name: 'StarMade Blueprint', extensions: ['sment'] },
+    { name: 'All Files', extensions: ['*'] },
+  ];
+
+  const filters =
+    type === 'image' ? imageFilters
+    : type === 'modpack' ? modpackFilters
+    : type === 'sment' ? smentFilters
+    : exeFilters;
 
   const result = await dialog.showOpenDialog({
     properties: ['openFile'],
     defaultPath: defaultPath || app.getPath('home'),
-    filters: type === 'image' ? imageFilters : type === 'modpack' ? modpackFilters : exeFilters,
+    filters,
   });
 
   if (result.canceled || result.filePaths.length === 0) {
@@ -2567,6 +2578,16 @@ ipcMain.handle(IPC.CATALOG_IMPORT_SMENT, (_event, catalogPath: string, smentPath
     return importSmentToCatalog(catalogPath, smentPath);
   } catch (error) {
     return { success: false, errors: [String(error)] };
+  }
+});
+
+ipcMain.handle(IPC.CATALOG_EXPORT_SMENT, (_event, rootPath: string, blueprintName: string, destDir: string) => {
+  if (!rootPath) return { success: false, error: 'No source path provided.' };
+  if (!destDir) return { success: false, error: 'No destination folder provided.' };
+  try {
+    return exportBlueprintToSment(rootPath, blueprintName, destDir);
+  } catch (error) {
+    return { success: false, error: String(error) };
   }
 });
 

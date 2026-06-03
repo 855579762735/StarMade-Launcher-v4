@@ -270,6 +270,8 @@ export const IPC = {
   CATALOG_DELETE: 'catalog:delete',
   /** Renderer → Main (invoke): import a .sment file into the blueprints catalog (extracts ZIP + copies archive). */
   CATALOG_IMPORT_SMENT: 'catalog:import-sment',
+  /** Renderer → Main (invoke): export a blueprint to a .sment file (zips into a chosen folder). */
+  CATALOG_EXPORT_SMENT: 'catalog:export-sment',
   /** Renderer → Main (invoke): compute sync diff between catalog and installation (items added/removed/modified). */
   CATALOG_SYNC_DIFF: 'catalog:sync-diff',
   /** Renderer → Main (invoke): apply a sync from catalog to installation (deploy all, skip conflicts unless overwrite). */

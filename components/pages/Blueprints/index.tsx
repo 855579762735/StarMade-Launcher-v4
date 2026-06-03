@@ -3,7 +3,7 @@ import PageContainer from '../../common/PageContainer';
 import CustomDropdown from '../../common/CustomDropdown';
 import SyncToolbar from '../../common/SyncToolbar';
 import { useData } from '../../../contexts/DataContext';
-import { FolderIcon, TrashIcon, ArchiveIcon, CheckIcon } from '../../common/icons';
+import { FolderIcon, TrashIcon, ArchiveIcon, CheckIcon, ExportIcon } from '../../common/icons';
 import type { ManagedItem } from '../../../types';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -284,7 +284,7 @@ const Blueprints: React.FC = () => {
 
   const handleImportSment = async () => {
     if (!catalogPath) return;
-    const selected = await launcher.dialog.openFile(undefined, undefined as unknown as 'image');
+    const selected = await launcher.dialog.openFile(undefined, 'sment');
     if (!selected || !selected.endsWith('.sment')) { if (selected) setError('Please select a .sment file'); return; }
     setIsBusy(true); setStatus(null); setError(null);
     try {
@@ -293,6 +293,32 @@ const Blueprints: React.FC = () => {
       else setError(result.errors?.join('; ') ?? 'Import failed');
       void loadCatalog();
     } catch (err) { setError(String(err)); } finally { setIsBusy(false); }
+  };
+
+  // Export selected blueprint(s) from a panel to .sment files in a chosen folder.
+  const handleExportSment = async (source: 'catalog' | 'install') => {
+    const rootPath = source === 'catalog' ? catalogPath : selectedInstance?.path;
+    const selection = source === 'catalog' ? catalogSelection : installSelection;
+    if (!rootPath) return;
+    // Only blueprint directories can be exported; .sment files are already archives.
+    const names = Array.from(selection).filter((k) => k.startsWith('bp:')).map((k) => k.slice(3));
+    if (names.length === 0) { setError('Select one or more blueprints to export.'); return; }
+
+    const destDir = await launcher.dialog.openFolder();
+    if (!destDir) return;
+
+    setIsBusy(true); setStatus(null); setError(null);
+    let exported = 0;
+    const errs: string[] = [];
+    for (const name of names) {
+      try {
+        const r = await launcher.catalog.exportSment(rootPath, name, destDir);
+        if (r.success) exported++; else if (r.error) errs.push(`${name}: ${r.error}`);
+      } catch (err) { errs.push(`${name}: ${String(err)}`); }
+    }
+    if (errs.length) setError(errs.join('; '));
+    else setStatus(`Exported ${exported} blueprint(s) to .sment`);
+    setIsBusy(false);
   };
 
   const handleSetupCatalog = async () => {
@@ -396,6 +422,9 @@ const Blueprints: React.FC = () => {
                   <button onClick={handleImportSment} disabled={isBusy} className="p-1.5 rounded-md hover:bg-white/10 transition-colors text-gray-400 hover:text-white disabled:opacity-40" title="Import .sment file">
                     <ArchiveIcon className="w-4 h-4" />
                   </button>
+                  <button onClick={() => void handleExportSment('catalog')} disabled={isBusy || !Array.from(catalogSelection).some((k) => k.startsWith('bp:'))} className="p-1.5 rounded-md hover:bg-white/10 transition-colors text-gray-400 hover:text-white disabled:opacity-40" title="Export selected blueprint(s) to .sment">
+                    <ExportIcon className="w-4 h-4" />
+                  </button>
                   <button onClick={() => launcher.shell.openPath(catalogPath)} className="p-1.5 rounded-md hover:bg-white/10 transition-colors text-gray-400 hover:text-white" title="Open catalog folder">
                     <FolderIcon className="w-4 h-4" />
                   </button>
@@ -451,6 +480,14 @@ const Blueprints: React.FC = () => {
                   <button onClick={installSelection.size === allInstallKeys.length ? deselectAllInstall : selectAllInstall} className="px-2 py-1 text-xs rounded bg-white/5 hover:bg-white/10 transition-colors text-gray-400" title={installSelection.size === allInstallKeys.length ? 'Deselect all' : 'Select all'}>
                     <CheckIcon className="w-3 h-3 inline mr-1" />{installSelection.size === allInstallKeys.length ? 'None' : 'All'}
                   </button>
+                  <button onClick={() => void handleExportSment('install')} disabled={isBusy || !Array.from(installSelection).some((k) => k.startsWith('bp:'))} className="p-1.5 rounded-md hover:bg-white/10 transition-colors text-gray-400 hover:text-white disabled:opacity-40" title="Export selected blueprint(s) to .sment">
+                    <ExportIcon className="w-4 h-4" />
+                  </button>
+                  {selectedInstance && (
+                    <button onClick={() => launcher.shell.openPath(selectedInstance.path)} className="p-1.5 rounded-md hover:bg-white/10 transition-colors text-gray-400 hover:text-white" title="Open installation folder">
+                      <FolderIcon className="w-4 h-4" />
+                    </button>
+                  )}
                   <button onClick={() => void loadInstall(true)} disabled={isLoadingInstall} className="px-2 py-1 text-xs rounded bg-white/5 hover:bg-white/10 transition-colors text-gray-400">
                     {isLoadingInstall ? 'Loading...' : 'Refresh'}
                   </button>

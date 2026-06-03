@@ -344,7 +344,7 @@ declare global {
         /** Open folder picker dialog. Returns selected path or null if canceled. */
         openFolder: (defaultPath?: string) => Promise<string | null>;
         /** Open file picker dialog. Returns selected path or null if canceled. */
-        openFile: (defaultPath?: string, type?: 'image' | 'java' | 'modpack') => Promise<string | null>;
+        openFile: (defaultPath?: string, type?: 'image' | 'java' | 'modpack' | 'sment') => Promise<string | null>;
       };
 
       /** Shell APIs */
@@ -516,6 +516,7 @@ declare global {
         import: (catalogPath: string, installationPath: string, items: Array<{ kind: string; name?: string; fileName?: string }>, overwrite?: boolean) => Promise<{ success: boolean; copiedCount?: number; skippedCount?: number; errors?: string[] }>;
         delete: (catalogPath: string, item: { kind: string; name?: string; fileName?: string }) => Promise<{ success: boolean; error?: string }>;
         importSment: (catalogPath: string, smentPath: string) => Promise<{ success: boolean; copiedCount?: number; errors?: string[] }>;
+        exportSment: (rootPath: string, blueprintName: string, destDir: string) => Promise<{ success: boolean; filePath?: string; error?: string }>;
         syncDiff: (catalogPath: string, installationPath: string, kinds: Array<'blueprint' | 'exported' | 'template'>) => Promise<{
           items: Array<{ ref: { kind: string; name?: string; fileName?: string }; label: string; status: 'new' | 'modified' | 'up-to-date'; catalogModifiedMs: number; installModifiedMs: number }>;
           newCount: number; modifiedCount: number; upToDateCount: number; error?: string;

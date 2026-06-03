@@ -31,6 +31,7 @@ import {
     LogOut       as ArrowRightOnRectangleIcon,
     CheckCircle2 as CheckCircleIcon,
     Download     as DownloadIcon,
+    Upload       as ExportIcon,
     FileText     as DocumentTextIcon,
     XCircle      as XCircleIcon,
     AlertTriangle as ExclamationTriangleIcon,
@@ -47,6 +48,7 @@ export {
     MonitorIcon, PencilIcon, RocketIcon, PlanetIcon, StarIcon, ServerIcon,
     CodeBracketIcon, BoltIcon, CubeIcon, InformationCircleIcon,
     UserPlusIcon, ArrowRightOnRectangleIcon, CheckCircleIcon, DownloadIcon,
+    ExportIcon,
     DocumentTextIcon, XCircleIcon, ExclamationTriangleIcon, MarsIcon,
     WrenchIcon, BackupIcon, RestoreIcon,
 };

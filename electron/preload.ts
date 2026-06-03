@@ -578,7 +578,7 @@ const launcherApi = {
     openFolder: (defaultPath?: string): Promise<string | null> =>
       ipcRenderer.invoke(IPC.DIALOG_OPEN_FOLDER, defaultPath),
     /** Open file picker dialog. Returns selected path or null if canceled. */
-    openFile: (defaultPath?: string, type?: 'image' | 'java' | 'modpack'): Promise<string | null> =>
+    openFile: (defaultPath?: string, type?: 'image' | 'java' | 'modpack' | 'sment'): Promise<string | null> =>
       ipcRenderer.invoke(IPC.DIALOG_OPEN_FILE, defaultPath, type),
   },
 
@@ -869,6 +869,11 @@ const launcherApi = {
     importSment: (catalogPath: string, smentPath: string): Promise<{
       success: boolean; copiedCount?: number; errors?: string[];
     }> => ipcRenderer.invoke(IPC.CATALOG_IMPORT_SMENT, catalogPath, smentPath),
+
+    /** Export a blueprint (from a catalog or installation root) to a .sment file in destDir. */
+    exportSment: (rootPath: string, blueprintName: string, destDir: string): Promise<{
+      success: boolean; filePath?: string; error?: string;
+    }> => ipcRenderer.invoke(IPC.CATALOG_EXPORT_SMENT, rootPath, blueprintName, destDir),
 
     /** Compute sync diff between catalog and installation. */
     syncDiff: (
