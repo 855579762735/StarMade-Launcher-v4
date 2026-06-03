@@ -1,7 +1,7 @@
 {
   "name": "starmade-launcher",
   "private": true,
-  "version": "4.2.10",
+  "version": "4.2.11",
   "description": "StarMade Launcher",
   "author": "Schine GmbH & StarMade Contributors",
   "type": "module",
@@ -54,7 +54,7 @@
   "build": {
     "appId": "org.starmade.launcher",
     "afterPack": "./afterPack.cjs",
-    "productName": "StarMade Launcher",
+    "productName": "StarMade-Launcher",
     "copyright": "Copyright © 2026 Schine GmbH",
     "files": [
       "dist/**/*",
