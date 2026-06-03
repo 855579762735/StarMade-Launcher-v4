@@ -12,10 +12,21 @@ export interface NewsItem {
 
 const RETRY_DELAY_MS = 5000;
 const MAX_RETRIES = 5;
+/** How long a successful fetch stays fresh before we refetch on next mount. */
+const CACHE_TTL_MS = 5 * 60 * 1000;
+
+// Module-level cache shared across every useNewsFetch() instance. Because the
+// News and Play pages each call this hook and get unmounted/remounted as the
+// user navigates (or as the Play page re-renders when switching installs), the
+// cache lets a remounted component reuse already-loaded news instead of
+// refetching from scratch through the flaky proxy — which is what caused the
+// feed to randomly revert to "failed to load" after a successful load.
+let cachedNews: NewsItem[] = [];
+let cacheTimestamp = 0;
 
 const useNewsFetch = () => {
-    const [news, setNews] = useState<NewsItem[]>([]);
-    const [loading, setLoading] = useState(true);
+    const [news, setNews] = useState<NewsItem[]>(cachedNews);
+    const [loading, setLoading] = useState(cachedNews.length === 0);
     const [error, setError] = useState<string | null>(null);
     const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const retryCountRef = useRef(0);
@@ -23,6 +34,14 @@ const useNewsFetch = () => {
 
     useEffect(() => {
         let cancelled = false;
+
+        // If we already have fresh cached news, show it and skip the refetch.
+        if (cachedNews.length > 0 && Date.now() - cacheTimestamp < CACHE_TTL_MS) {
+            setNews(cachedNews);
+            setLoading(false);
+            setError(null);
+            return;
+        }
 
         const fetchNews = async () => {
             // Abort any in-flight request before starting a new one
@@ -83,8 +102,14 @@ const useNewsFetch = () => {
                     };
                 });
 
+                // Always refresh the shared cache, even if this instance has
+                // since unmounted, so the next mount gets the latest news.
+                cachedNews = parsedItems;
+                cacheTimestamp = Date.now();
+
                 if (!cancelled) {
                     setNews(parsedItems);
+                    setError(null);
                     retryCountRef.current = 0;
                     if (retryTimerRef.current !== null) {
                         clearTimeout(retryTimerRef.current);
@@ -99,9 +124,15 @@ const useNewsFetch = () => {
                 console.error("News fetch error:", e);
                 if (!cancelled) {
                     retryCountRef.current += 1;
+                    // Only surface the error screen when we have nothing to show.
+                    // If a previous load already populated the feed, keep showing
+                    // it and retry quietly in the background instead of reverting.
+                    const hasNewsToShow = cachedNews.length > 0;
                     const retryDelaySec = Math.round(RETRY_DELAY_MS / 1000);
                     if (retryCountRef.current <= MAX_RETRIES) {
-                        setError(`Failed to load the news feed. Retrying in ${retryDelaySec}s (attempt ${retryCountRef.current} of ${MAX_RETRIES})...`);
+                        if (!hasNewsToShow) {
+                            setError(`Failed to load the news feed. Retrying in ${retryDelaySec}s (attempt ${retryCountRef.current} of ${MAX_RETRIES})...`);
+                        }
                         if (retryTimerRef.current !== null) {
                             clearTimeout(retryTimerRef.current);
                         }
@@ -110,7 +141,7 @@ const useNewsFetch = () => {
                                 fetchNews();
                             }
                         }, RETRY_DELAY_MS);
-                    } else {
+                    } else if (!hasNewsToShow) {
                         setError('Failed to load the news feed. Please check your internet connection and try again later.');
                     }
                 }

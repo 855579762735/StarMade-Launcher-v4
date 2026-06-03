@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
 import type { DataContextType, ManagedItem, Account, Version, DownloadStatus, DownloadProgress, LoginResult, RegisterResult, PlaySession, PlayTimeTotals } from '../types';
+import { isActivelyDownloading } from '../utils/downloadState';
 
 // ─── Store keys ──────────────────────────────────────────────────────────────
 
@@ -359,23 +360,27 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }, [servers, isLoaded]);
 
     // Keep the selected installation id valid as the installation list changes.
+    // An installation that is currently (re-)downloading counts as "available"
+    // so updating the selected install doesn't deselect it and switch away.
     useEffect(() => {
         if (!isLoaded) return;
         setSelectedInstallationId(prev => {
-            const installedInstallations = installations.filter(installation => installation.installed !== false);
+            const availableInstallations = installations.filter(installation =>
+                installation.installed !== false || isActivelyDownloading(downloadStatuses[installation.id])
+            );
 
-            if (prev && installedInstallations.some(installation => installation.id === prev)) {
+            if (prev && availableInstallations.some(installation => installation.id === prev)) {
                 return prev;
             }
 
             const lastPlayedInstallationId = lastPlayedSession?.installationId;
-            if (lastPlayedInstallationId && installedInstallations.some(installation => installation.id === lastPlayedInstallationId)) {
+            if (lastPlayedInstallationId && availableInstallations.some(installation => installation.id === lastPlayedInstallationId)) {
                 return lastPlayedInstallationId;
             }
 
-            return installedInstallations[0]?.id ?? null;
+            return availableInstallations[0]?.id ?? null;
         });
-    }, [installations, isLoaded, lastPlayedSession]);
+    }, [installations, isLoaded, lastPlayedSession, downloadStatuses]);
 
     // ── Mutations ────────────────────────────────────────────────────────────
 

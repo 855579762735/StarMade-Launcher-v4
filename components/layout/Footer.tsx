@@ -9,6 +9,7 @@ import useOnClickOutside from '../hooks/useOnClickOutside';
 import { useApp } from '../../contexts/AppContext';
 import { useData } from '../../contexts/DataContext';
 import { getIconComponent } from '../../utils/getIconComponent';
+import { isActivelyDownloading } from '../../utils/downloadState';
 
 const DiscordButton: React.FC = () => {
     const [onlineCount, setOnlineCount] = useState<number | null>(null);
@@ -65,14 +66,18 @@ const InstallationSelector: React.FC<{
     const [isOpen, setIsOpen] = useState(false);
     const dropdownRef = useRef<HTMLDivElement>(null);
     useOnClickOutside(dropdownRef, () => setIsOpen(false));
-    const { installations } = useData();
+    const { installations, downloadStatuses } = useData();
     const { navigate } = useApp();
-    
-    const installedInstallations = installations.filter(inst => inst.installed !== false);
+
+    // An installation that is currently (re-)downloading stays in the list, just
+    // shown with a downloading indicator, so updating an install doesn't hide it.
+    const availableInstallations = installations.filter(
+        inst => inst.installed !== false || isActivelyDownloading(downloadStatuses[inst.id])
+    );
     // Resolve the displayed installation: prefer the explicitly selected id, fall back to first
     const selectedInstallation =
-        (selectedId ? installedInstallations.find(i => i.id === selectedId) : null)
-        ?? installedInstallations[0]
+        (selectedId ? availableInstallations.find(i => i.id === selectedId) : null)
+        ?? availableInstallations[0]
         ?? installations[0]
         ?? null;
 
@@ -93,7 +98,7 @@ const InstallationSelector: React.FC<{
     }
 
     // No installed installations - prompt to download
-    if (installedInstallations.length === 0) {
+    if (availableInstallations.length === 0) {
         return (
             <button
                 onClick={() => navigate('Installations', { initialTab: 'installations' })}
@@ -119,7 +124,14 @@ const InstallationSelector: React.FC<{
                     {getIconComponent(selectedInstallation.icon, 'small')}
                     <div className="text-left">
                         <p className="text-sm font-medium text-white">{selectedInstallation.name}</p>
-                        <p className="text-xs text-gray-400">{selectedInstallation.version}</p>
+                        {isActivelyDownloading(downloadStatuses[selectedInstallation.id]) ? (
+                            <p className="text-xs text-starmade-accent flex items-center gap-1.5">
+                                <span className="w-1.5 h-1.5 rounded-full bg-starmade-accent animate-pulse"></span>
+                                Downloading… {downloadStatuses[selectedInstallation.id]?.percent ?? 0}%
+                            </p>
+                        ) : (
+                            <p className="text-xs text-gray-400">{selectedInstallation.version}</p>
+                        )}
                     </div>
                 </div>
                 <ChevronDownIcon className={`w-5 h-5 text-gray-400 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
@@ -128,9 +140,9 @@ const InstallationSelector: React.FC<{
             {isOpen && (
                 <div className="absolute bottom-full mb-2 w-64 bg-slate-900/90 backdrop-blur-sm border border-slate-700 rounded-md shadow-lg overflow-hidden z-20">
                     <ul>
-                        {installedInstallations.map(installation => (
+                        {availableInstallations.map(installation => (
                             <li key={installation.id}>
-                                <button 
+                                <button
                                     onClick={() => {
                                         onSelect(installation.id);
                                         setIsOpen(false);
@@ -140,7 +152,14 @@ const InstallationSelector: React.FC<{
                                     {getIconComponent(installation.icon, 'small')}
                                     <div className="flex-1">
                                         <p className="text-sm text-white">{installation.name}</p>
-                                        <p className="text-xs text-gray-400">{installation.version}</p>
+                                        {isActivelyDownloading(downloadStatuses[installation.id]) ? (
+                                            <p className="text-xs text-starmade-accent flex items-center gap-1.5">
+                                                <span className="w-1.5 h-1.5 rounded-full bg-starmade-accent animate-pulse"></span>
+                                                Downloading… {downloadStatuses[installation.id]?.percent ?? 0}%
+                                            </p>
+                                        ) : (
+                                            <p className="text-xs text-gray-400">{installation.version}</p>
+                                        )}
                                     </div>
                                     {installation.id === selectedInstallation?.id && (
                                         <CheckIcon className="w-4 h-4 text-starmade-accent" />
@@ -168,12 +187,14 @@ const InstallationSelector: React.FC<{
 
 interface SciFiPlayButtonProps {
     isUpdating: boolean;
+    /** Disable launching because the selected install is still downloading. */
+    isDownloading?: boolean;
     statusLabel?: string | null;
     onClick: () => void;
     onUpdateComplete: () => void;
 }
 
-const SciFiPlayButton: React.FC<SciFiPlayButtonProps> = ({ isUpdating, statusLabel, onClick, onUpdateComplete }) => {
+const SciFiPlayButton: React.FC<SciFiPlayButtonProps> = ({ isUpdating, isDownloading, statusLabel, onClick, onUpdateComplete }) => {
     const [progress, setProgress] = useState(0);
 
     useEffect(() => {
@@ -206,7 +227,7 @@ const SciFiPlayButton: React.FC<SciFiPlayButtonProps> = ({ isUpdating, statusLab
     return (
         <button
             onClick={onClick}
-            disabled={isUpdating}
+            disabled={isUpdating || isDownloading}
             className="
                 group relative font-display text-xl font-bold uppercase tracking-wider text-white
                 h-[60px] w-[260px]
@@ -248,7 +269,7 @@ const SciFiPlayButton: React.FC<SciFiPlayButtonProps> = ({ isUpdating, statusLab
 
             <div className="relative z-10 flex items-center justify-center h-full w-full">
                 <span className="text-2xl">
-                    {isUpdating ? (statusLabel || 'Launching…') : 'Launch'}
+                    {isUpdating ? (statusLabel || 'Launching…') : (isDownloading ? 'Downloading…' : 'Launch')}
                 </span>
             </div>
         </button>
@@ -258,13 +279,20 @@ const SciFiPlayButton: React.FC<SciFiPlayButtonProps> = ({ isUpdating, statusLab
 
 const Footer: React.FC = () => {
   const { navigate, isLaunching, launchStatus, openLaunchModal, completeLaunching } = useApp();
-  const { installations, servers, selectedInstallationId, selectedServer, setSelectedInstallationId, setSelectedServerId } = useData();
+  const { installations, servers, selectedInstallationId, selectedServer, downloadStatuses, setSelectedInstallationId, setSelectedServerId } = useData();
 
-  const installedInstallations = installations.filter(inst => inst.installed !== false);
+  const availableInstallations = installations.filter(
+      inst => inst.installed !== false || isActivelyDownloading(downloadStatuses[inst.id])
+  );
   const activeInstallation =
-      (selectedInstallationId ? installedInstallations.find(i => i.id === selectedInstallationId) : null)
-      ?? installedInstallations[0]
+      (selectedInstallationId ? availableInstallations.find(i => i.id === selectedInstallationId) : null)
+      ?? availableInstallations[0]
       ?? null;
+
+  // While the selected install is (re-)downloading it can't be launched yet.
+  const isActiveDownloading = activeInstallation
+      ? isActivelyDownloading(downloadStatuses[activeInstallation.id])
+      : false;
 
   const handleLaunchClick = () => {
     if (!activeInstallation) {
@@ -288,8 +316,9 @@ const Footer: React.FC = () => {
                 onSelect={setSelectedInstallationId}
             />
 
-            <SciFiPlayButton 
+            <SciFiPlayButton
                 isUpdating={isLaunching}
+                isDownloading={isActiveDownloading}
                 statusLabel={launchStatus}
                 onClick={handleLaunchClick}
                 onUpdateComplete={completeLaunching}
