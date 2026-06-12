@@ -16,7 +16,7 @@ const DEFAULT_LAUNCHER_SETTINGS: LauncherSettingsData = {
 const POST_LAUNCH_CLOSE_DELAY_MS = 250;
 
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-    const { activeAccount, installations, servers, isLoaded: isDataLoaded, recordSession } = useData();
+    const { activeAccount, installations, servers, versions, isLoaded: isDataLoaded, recordSession } = useData();
     const [activePage, setActivePage] = useState<Page>('Play');
     const [pageProps, setPageProps] = useState<PageProps>({});
     const [isLaunchModalOpen, setIsLaunchModalOpen] = useState(false);
@@ -191,7 +191,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         }
 
         // ── Pre-launch: ensure the required Java version is available ────────
-        const requiredJava = installation.requiredJavaVersion;
+        // Prefer the requirement from the live version manifest over the value
+        // stored on the installation.  An install updated from a Java 8 build
+        // (< 0.3) to a Java 21 build (>= 0.3) may still carry a stale
+        // requiredJavaVersion of 8; trusting it here would skip the Java 21
+        // download and the launch would then fail to find a Java 21 runtime.
+        const manifestEntry = versions?.find(v => v.id === installation.version);
+        const requiredJava = manifestEntry?.requiredJavaVersion ?? installation.requiredJavaVersion;
         if (requiredJava && window.launcher.java) {
             try {
                 const runtimes = await window.launcher.java.list();
@@ -292,7 +298,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             setLaunchError(String(error));
             setIsLaunching(false);
         }
-    }, [activeAccount, applyPostLaunchBehavior, getLauncherSettings, recordSession]);
+    }, [activeAccount, applyPostLaunchBehavior, getLauncherSettings, recordSession, versions]);
 
     /** Called by the "Launch Anyway" modal button — launches without terminating. */
     const startLaunching = useCallback(async () => {

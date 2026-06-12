@@ -64,6 +64,7 @@ describe('AppContext post-launch behavior', () => {
     mockUseData.mockReturnValue({
       activeAccount: null,
       installations: [installation],
+      versions: [],
       recordSession: mockRecordSession,
     });
   });
@@ -207,6 +208,7 @@ describe('AppContext server-panel migration', () => {
     mockUseData.mockReturnValue({
       activeAccount: null,
       installations: [installation],
+      versions: [],
       recordSession: mockRecordSession,
       ...data,
     });

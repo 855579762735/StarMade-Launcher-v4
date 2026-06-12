@@ -340,7 +340,7 @@ export function parseJavaVersion(versionOutput: string): number | null {
 /**
  * Check if a Java executable is valid and return its version.
  */
-async function checkJavaExecutable(javaPath: string): Promise<{ version: number; path: string } | null> {
+export async function checkJavaExecutable(javaPath: string): Promise<{ version: number; path: string } | null> {
 	try {
 		const { stderr } = await execFileAsync(javaPath, ['-version']);
 		const version = parseJavaVersion(stderr);

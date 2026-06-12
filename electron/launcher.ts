@@ -9,7 +9,7 @@ import { spawn, ChildProcess } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import { app, shell } from 'electron';
-import { getRequiredJavaVersion, getJvmArgsForJava, MACOS_CLIENT_ARGS, resolveJavaPath } from './java.js';
+import { getRequiredJavaVersion, getJvmArgsForJava, MACOS_CLIENT_ARGS, resolveJavaPath, checkJavaExecutable } from './java.js';
 import { BrowserWindow } from 'electron';
 import { storeGet, storeSet } from './store.js';
 
@@ -435,11 +435,27 @@ export async function launchGame(options: LaunchOptions): Promise<LaunchResult> 
     // does not exist we fall back to the standard auto-resolution logic so
     // that either the bundled JRE (once downloaded) or a system-installed Java
     // of the correct version is found instead.
+    //
+    // Additionally, the custom path must point at a Java whose *major version*
+    // matches what this build requires.  When an install is updated from a
+    // Java 8 build (< 0.3) to a Java 21 build (>= 0.3), the stored
+    // customJavaPath still points at the old Java 8 binary — which exists on
+    // disk — so without this check StarMade 0.3+ would be launched with Java 8
+    // and crash.  When the versions don't match we ignore the custom path and
+    // auto-resolve the correct runtime instead.
     let javaPath: string | null = null;
 
     if (customJavaPath) {
       if (fs.existsSync(customJavaPath)) {
-        javaPath = customJavaPath;
+        const detected = await checkJavaExecutable(customJavaPath);
+        if (detected && detected.version === requiredJavaVersion) {
+          javaPath = customJavaPath;
+        } else {
+          console.warn(
+            `[Launcher] Custom Java path ${customJavaPath} is Java ${detected?.version ?? 'unknown'}, ` +
+            `but StarMade ${starMadeVersion} requires Java ${requiredJavaVersion} — falling back to auto-resolve`,
+          );
+        }
       } else {
         console.warn(`[Launcher] Custom Java path not found: ${customJavaPath} — falling back to auto-resolve`);
       }
