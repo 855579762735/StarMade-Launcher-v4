@@ -41,7 +41,9 @@ describe('isSafeDeletionPath', () => {
     expect(isSafeDeletionPath(home)).toBe(false);
   });
 
-  it('blocks OneDrive-redirected user folders when OneDrive is set', () => {
+  // OneDrive-redirected folders are a Windows-only concept (derived from the
+  // OneDrive env var), so this only applies when running on Windows.
+  it.runIf(process.platform === 'win32')('blocks OneDrive-redirected user folders when OneDrive is set', () => {
     const original = process.env.OneDrive;
     const fakeOneDrive = path.join(home, 'OneDrive');
     process.env.OneDrive = fakeOneDrive;

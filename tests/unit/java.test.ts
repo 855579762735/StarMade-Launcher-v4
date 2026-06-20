@@ -180,35 +180,43 @@ describe('parseJavaBitness', () => {
 });
 
 describe('getSystemJavaSearchPaths', () => {
+  // Expectations are derived with the same path module the implementation uses, so
+  // assertions hold whether the test runs on Windows or the Linux CI runner (where
+  // path.join uses forward slashes).
+  const joinN = (...parts: string[]) => path.normalize(path.join(...parts));
+
   it('includes common vendor dirs beyond Adoptium on Windows (Corretto/Microsoft/Zulu)', () => {
+    const programFiles = 'C:\\Program Files';
     const env = {
-      ProgramFiles: 'C:\\Program Files',
+      ProgramFiles: programFiles,
       'ProgramFiles(x86)': 'C:\\Program Files (x86)',
     } as unknown as NodeJS.ProcessEnv;
     const paths = getSystemJavaSearchPaths(env, 'win32');
-    expect(paths).toContain(path.normalize('C:\\Program Files\\Amazon Corretto'));
-    expect(paths).toContain(path.normalize('C:\\Program Files\\Microsoft'));
-    expect(paths).toContain(path.normalize('C:\\Program Files\\Zulu'));
-    expect(paths).toContain(path.normalize('C:\\Program Files\\Eclipse Adoptium'));
+    expect(paths).toContain(joinN(programFiles, 'Amazon Corretto'));
+    expect(paths).toContain(joinN(programFiles, 'Microsoft'));
+    expect(paths).toContain(joinN(programFiles, 'Zulu'));
+    expect(paths).toContain(joinN(programFiles, 'Eclipse Adoptium'));
   });
 
   it('covers per-user (LOCALAPPDATA) installs on Windows', () => {
+    const localAppData = 'C:\\Users\\me\\AppData\\Local';
     const env = {
       ProgramFiles: 'C:\\Program Files',
-      LOCALAPPDATA: 'C:\\Users\\me\\AppData\\Local',
+      LOCALAPPDATA: localAppData,
     } as unknown as NodeJS.ProcessEnv;
     const paths = getSystemJavaSearchPaths(env, 'win32');
-    expect(paths).toContain(path.normalize('C:\\Users\\me\\AppData\\Local\\Programs\\Eclipse Adoptium'));
+    expect(paths).toContain(joinN(localAppData, 'Programs', 'Eclipse Adoptium'));
   });
 
   it('derives Windows roots from env rather than a hardcoded C: drive', () => {
+    const programFiles = 'D:\\Apps';
     const env = {
-      ProgramFiles: 'D:\\Apps',
+      ProgramFiles: programFiles,
       'ProgramFiles(x86)': 'D:\\Apps86',
     } as unknown as NodeJS.ProcessEnv;
     const paths = getSystemJavaSearchPaths(env, 'win32');
-    expect(paths).toContain(path.normalize('D:\\Apps\\Amazon Corretto'));
-    expect(paths.some(p => p.startsWith('C:\\'))).toBe(false);
+    expect(paths).toContain(joinN(programFiles, 'Amazon Corretto'));
+    expect(paths.some(p => p.includes('C:\\') || p.includes('C:/'))).toBe(false);
   });
 
   it('includes JAVA_HOME so it is probed directly', () => {
