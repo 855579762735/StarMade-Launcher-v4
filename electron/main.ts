@@ -21,7 +21,7 @@ import { storeGet, storeSet, storeDelete, storeClearAll } from './store.js';
 import { fetchAllVersions, invalidateVersionCache } from './versions.js';
 import { startDownload, cancelDownload } from './downloader.js';
 import type { DownloadProgress } from './downloader.js';
-import { downloadJava, detectSystemJava, resolveJavaPath, getDefaultJavaPaths, findJavaExecutableInDir } from './java.js';
+import { downloadJava, detectSystemJava, resolveJavaPath, getDefaultJavaPaths, findJavaExecutableInDir, ensureJava } from './java.js';
 import { launchGame, stopGame, getGameStatus, getAllRunningGames, getLogPath, openLogLocation, clearServerLogFiles, getGraphicsInfo, listServerLogFiles, readServerLogFile, sendServerStdin, listChatFiles, readChatFile, getPlayTimeTotals, hasRunningGames } from './launcher.js';
 import { isSteamGamingMode } from './steam.js';
 import type { UpdateInfo } from './updater.js';
@@ -53,6 +53,7 @@ import {
 } from './blueprints.js';
 import type { CatalogItemRef, SyncProgress } from './blueprints.js';
 import { getManagedPathCandidates } from './install-paths.js';
+import { isSafeDeletionPath, isStarMadeInstallDir } from './safe-delete.js';
 import { registerRemoteIpcHandlers } from './starmote-ipc.js';
 import { isStarmoteRolloutEnabled } from './starmote-feature-flag.js';
 import { RemoteFileBackend } from './remote-file-backend.js';
@@ -706,6 +707,16 @@ ipcMain.handle(IPC.JAVA_DOWNLOAD, async (_event, version: 8 | 21) => {
     const launcherDir = getLauncherDir();
     const javaPath = await downloadJava(version, launcherDir);
     return { success: true, path: javaPath };
+  } catch (error) {
+    return { success: false, error: String(error) };
+  }
+});
+
+ipcMain.handle(IPC.JAVA_ENSURE, async (_event, version: 8 | 21, preferredPath?: string) => {
+  try {
+    const launcherDir = getLauncherDir();
+    const result = await ensureJava(version, launcherDir, { preferredPath });
+    return { success: true, ...result };
   } catch (error) {
     return { success: false, error: String(error) };
   }
@@ -1706,115 +1717,8 @@ ipcMain.handle(IPC.LICENSES_COPY_TO_USER_DATA, () => {
 });
 
 // ─── Installation file management handlers ───────────────────────────────────
-
-/**
- * Well-known files and folders found in a valid StarMade installation.
- * Used by `isStarMadeInstallDir` to verify a directory before deleting it.
- */
-const STARMADE_MARKERS = new Set([
-  'StarMade.jar', // Main game JAR
-  'version.txt',  // Version descriptor written by the game/launcher
-  'data',         // Game data folder (saves, universe, etc.)
-  'logs',         // Game log folder
-  'StarMade',     // Nested StarMade subdirectory (some installs)
-]);
-
-/**
- * Returns true when `targetPath` is safe to recursively delete.
- *
- * Safety checks:
- * - Must be an absolute path with at least 2 directory levels below the
- *   filesystem root (prevents deleting root, drive root, or a top-level
- *   system directory such as /home or C:\Users).
- * - Must not equal, nor be a parent of, any well-known system directory.
- *   On Windows the protected list is built from environment variables so it
- *   correctly uses the real absolute paths regardless of the drive letter.
- */
-function isSafeDeletionPath(targetPath: string): boolean {
-  const normalized = path.normalize(targetPath);
-
-  // Must be absolute.
-  if (!path.isAbsolute(normalized)) return false;
-
-  // Strip the filesystem root (e.g. '/' or 'C:\') and require at least two
-  // meaningful path components beneath it, e.g.:
-  //   /home            → 1 component → BLOCKED
-  //   /home/alice      → 2 components → BLOCKED (home roots listed below)
-  //   /home/alice/game → 3 components → OK (if not in blocked list)
-  const { root } = path.parse(normalized);
-  const relParts = normalized.slice(root.length).split(path.sep).filter(Boolean);
-  if (relParts.length < 2) return false;
-
-  // Build the complete set of paths that must never be deleted.
-  const blockedPaths = new Set<string>();
-
-  if (process.platform === 'win32') {
-    // Drive root (e.g. C:\) – already captured via path.parse().root above.
-    blockedPaths.add(path.normalize(root));
-
-    // Absolute system directories derived from well-known environment variables.
-    for (const envPath of [
-      process.env.SystemRoot,           // C:\Windows
-      process.env.ProgramFiles,         // C:\Program Files
-      process.env['ProgramFiles(x86)'], // C:\Program Files (x86)
-    ]) {
-      if (envPath) blockedPaths.add(path.normalize(envPath));
-    }
-
-    // Parent directory of all user home folders (e.g. C:\Users).
-    blockedPaths.add(path.dirname(os.homedir()));
-  } else {
-    // Unix / macOS well-known system directories (all expressed as absolute paths).
-    for (const p of [
-      '/', '/bin', '/boot', '/dev', '/etc', '/lib', '/lib64',
-      '/proc', '/root', '/sbin', '/sys', '/tmp', '/usr', '/var',
-      '/home',   // parent of Linux user dirs — must NOT be deleted
-      '/Users',  // parent of macOS user dirs — must NOT be deleted
-    ]) {
-      blockedPaths.add(path.normalize(p));
-    }
-  }
-
-  const lowerNormalized = normalized.toLowerCase();
-  for (const blocked of blockedPaths) {
-    const lowerBlocked = blocked.toLowerCase();
-    // Block if normalized equals the protected path.
-    if (lowerNormalized === lowerBlocked) return false;
-    // Block if normalized is a *parent* of a protected path
-    // (e.g. prevent someone sneaking in the parent of C:\Windows).
-    if (lowerBlocked.startsWith(lowerNormalized + path.sep)) return false;
-  }
-
-  return true;
-}
-
-/**
- * Returns true when `targetPath` appears to be a launcher-managed StarMade
- * installation directory.
- *
- * An empty directory is considered safe to remove (it may have been created
- * just before a download was cancelled or never started).
- *
- * For non-empty directories we require at least one well-known StarMade
- * marker file/folder to be present.  This prevents accidental deletion of
- * unrelated directories that happen to have the same path as a misconfigured
- * installation record.
- */
-function isStarMadeInstallDir(targetPath: string): boolean {
-  let entries: string[];
-  try {
-    entries = fs.readdirSync(targetPath);
-  } catch {
-    // If we cannot read the directory (e.g. permissions), be conservative.
-    return false;
-  }
-
-  // Empty directory – safe to delete (created pre-download or after a cancel).
-  if (entries.length === 0) return true;
-
-  // At least one well-known StarMade marker must be present.
-  return entries.some(e => STARMADE_MARKERS.has(e));
-}
+// The path-safety helpers (`isSafeDeletionPath`, `isStarMadeInstallDir`) live in
+// ./safe-delete.ts so they can be unit-tested independently of the main process.
 
 ipcMain.handle(IPC.INSTALLATION_DELETE_FILES, async (_event, targetPath: string) => {
   if (typeof targetPath !== 'string' || targetPath.trim() === '') {
@@ -1837,15 +1741,17 @@ ipcMain.handle(IPC.INSTALLATION_DELETE_FILES, async (_event, targetPath: string)
     return { success: true };
   }
 
-  /*if (!isStarMadeInstallDir(resolvedTargetPath)) {
+  if (!isStarMadeInstallDir(resolvedTargetPath)) {
     return {
       success: false,
-      error: `The directory does not appear to be a StarMade installation: ${resolvedTargetPath}`,
+      error: `This folder does not look like a StarMade installation, so it was not deleted: ${resolvedTargetPath}`,
     };
-  }*/
+  }
 
   try {
-    await fs.promises.rm(resolvedTargetPath, { recursive: true, force: true });
+    // Move to the OS Recycle Bin / Trash rather than permanently deleting, so an
+    // accidental removal is recoverable.
+    await shell.trashItem(resolvedTargetPath);
     if (fs.existsSync(resolvedTargetPath)) {
       return { success: false, error: `Directory still exists after deletion: ${resolvedTargetPath}` };
     }
@@ -1991,13 +1897,13 @@ ipcMain.handle(
     }
 
     // Require the target to look like a StarMade installation (or be absent/empty)
-    // before deleting it, to prevent wiping unrelated directories.
-    /*if (fs.existsSync(targetPath) && !isStarMadeInstallDir(targetPath)) {
+    // before replacing it, to prevent wiping unrelated directories.
+    if (fs.existsSync(targetPath) && !isStarMadeInstallDir(targetPath)) {
       return {
         success: false,
         error: `The directory does not appear to be a StarMade installation: ${targetPath}`,
       };
-    }*/
+    }
 
     // ── Atomic-style restore ─────────────────────────────────────────────────
     // Extract into a temp directory first.  Only replace the target directory
@@ -2981,61 +2887,6 @@ ipcMain.handle(
 const WINDOW_READY_DELAY_MS = 2_000;
 
 /**
- * On the very first launch, run a background legacy-installation scan and push
- * the results to the renderer via `IPC.LEGACY_SCAN_RESULT`.  Subsequent
- * launches skip the scan entirely (tracked via the store key
- * `legacyAutoScanDone`) so startup performance is not degraded.
- *
- * If the scan throws an unexpected error it is still marked as done to prevent
- * a broken environment from causing every subsequent startup to re-run the
- * slow scan indefinitely.
- */
-async function runStartupLegacyScan(): Promise<void> {
-  if (storeGet('legacyAutoScanDone') === true) return;
-
-  try {
-    const searchRoots = getLegacyAutoDetectRoots();
-    const found = new Set<string>();
-    await Promise.all(
-      searchRoots.map(({ root, maxDepth }) =>
-        findLegacyInstalls(root, maxDepth).then(paths => paths.forEach(p => found.add(p)))
-      )
-    );
-    const results = Array.from(found);
-
-    // Mark as done before pushing so a crash during push doesn't re-run the
-    // slow scan on every subsequent launch.
-    storeSet('legacyAutoScanDone', true);
-
-    // Persist the scan outcome so that subsequent launches can restore the
-    // correct prompt state without re-running the slow scan.  Don't overwrite
-    // a user's dismiss decision or a completed import (e.g. if legacyAutoScanDone
-    // was lost but the prompt state was preserved).
-    const existingPromptState = storeGet('legacyImportPromptState') as { status?: string } | undefined;
-    if (existingPromptState?.status !== 'dismissed' && existingPromptState?.status !== 'imported') {
-      storeSet('legacyImportPromptState', {
-        status: results.length > 0 ? 'pending' : 'not-found',
-        paths: results,
-        updatedAt: new Date().toISOString(),
-      });
-    }
-
-    // Always notify the renderer so it can either auto-import found installs or
-    // show the "couldn't find" prompt.  Delay so the window is fully loaded
-    // before the event is delivered.  mainWindow may be null if the user closed
-    // the window very quickly; the optional-chain handles that gracefully.
-    setTimeout(() => {
-      mainWindow?.webContents.send(IPC.LEGACY_SCAN_RESULT, results);
-    }, WINDOW_READY_DELAY_MS);
-  } catch (err) {
-    // Non-fatal: mark as done to avoid re-running the slow scan on every
-    // subsequent launch in environments with a persistent error.
-    console.warn('[legacy] Startup scan failed:', err);
-    storeSet('legacyAutoScanDone', true);
-  }
-}
-
-/**
  * Perform a background update check on launch and push a notification to the
  * renderer if a newer version is available.  Respects the user's
  * `checkForUpdates` and `useBetaChannel` launcher settings.
@@ -3080,7 +2931,12 @@ app.whenReady().then(() => {
   copyPresetsToUserData();
   buildMenu();
   createWindow();
-  runStartupLegacyScan();
+  // NOTE: the filesystem-wide legacy install scan is intentionally NOT run
+  // automatically. It used to sweep the home dir, Desktop, Downloads, etc. and
+  // silently import anything containing StarMade.jar as an "installation" — which
+  // could turn a user's Downloads folder into a deletable install record. Users
+  // now import existing installs explicitly (Installations page / Launcher
+  // Settings) via the LEGACY_SCAN_FOLDER handler.
   runStartupUpdateCheck();
 
   // On Linux AppImage builds, re-register the launcher's icon and .desktop

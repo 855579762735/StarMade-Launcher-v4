@@ -212,6 +212,21 @@ const LauncherSettings: React.FC = () => {
             if (result.success) {
                 setJavaDownloadProgress(prev => ({ ...prev, [version]: 'Installed!' }));
                 await loadJavaRuntimes();
+
+                // Keep the default settings' Java path for this version in sync so new
+                // installs (and the Settings UI) point at the freshly installed runtime.
+                if (result.path && window.launcher?.store) {
+                    const fieldKey = version === 21 ? 'javaPath21' : 'javaPath8';
+                    for (const key of ['defaultInstallationSettings', 'defaultServerSettings']) {
+                        try {
+                            const current = (await window.launcher.store.get(key)) as Record<string, unknown> | undefined;
+                            await window.launcher.store.set(key, { ...(current ?? {}), [fieldKey]: result.path });
+                        } catch (persistErr) {
+                            console.warn('[LauncherSettings] Failed to persist default Java path:', persistErr);
+                        }
+                    }
+                }
+
                 setTimeout(() => {
                     setJavaDownloadProgress(prev => {
                         const next = { ...prev };

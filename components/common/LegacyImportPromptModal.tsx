@@ -70,7 +70,7 @@ const LegacyImportPromptModal: React.FC<LegacyImportPromptModalProps> = ({
             ) : (
               <>
                 <p className="mt-2 text-sm text-gray-300 leading-relaxed">
-                  We found {installPaths.length} legacy {installLabel} from an older launcher that could not be imported automatically. You can retry now or review them in Launcher Settings.
+                  We found {installPaths.length} legacy {installLabel} from an older launcher. Import them now, or review them in Launcher Settings. Nothing is imported until you choose to.
                 </p>
                 <p className="mt-2 text-xs text-gray-400">
                   Legacy installs are detected by finding folders that contain <span className="font-mono text-gray-300">StarMade.jar</span>.
@@ -126,7 +126,7 @@ const LegacyImportPromptModal: React.FC<LegacyImportPromptModalProps> = ({
                 disabled={isImporting}
                 className="px-4 py-2 rounded-md bg-starmade-accent hover:bg-starmade-accent/80 text-sm font-bold uppercase tracking-wider disabled:bg-starmade-accent/50 disabled:cursor-not-allowed transition-colors"
               >
-                {isImporting ? 'Importing…' : `Retry Import`}
+                {isImporting ? 'Importing…' : `Import`}
               </button>
             </>
           )}

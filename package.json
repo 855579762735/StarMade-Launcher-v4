@@ -1,7 +1,7 @@
 {
   "name": "starmade-launcher",
   "private": true,
-  "version": "4.2.15",
+  "version": "4.2.16",
   "description": "StarMade Launcher",
   "author": "Schine GmbH & StarMade Contributors",
   "type": "module",

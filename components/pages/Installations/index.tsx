@@ -10,6 +10,8 @@ import PageContainer from '../../common/PageContainer';
 import { useData } from '../../../contexts/DataContext';
 import { useApp } from '../../../contexts/AppContext';
 import { formatPlayTime } from '../../../utils/formatPlayTime';
+import useLegacyInstallImporter from '../../hooks/useLegacyInstallImporter';
+import { dedupeLegacyInstallPaths } from '../../../utils/legacyImport';
 
 interface InstallationsProps {
   initialTab?: InstallationsTab;
@@ -174,11 +176,26 @@ const [deleteTarget, setDeleteTarget] = useState<ManagedItem | null>(null);
         setDeleteTarget(item);
     }, [activeTab, installations, servers]);
 
-    const handleDeleteConfirm = useCallback(async () => {
+    /** Drop the store record only. Never touches files on disk. */
+    const removeRecord = useCallback((id: string) => {
+        if (activeTab === 'installations') deleteInstallation(id);
+        else deleteServer(id);
+        setDeleteTarget(null);
+        setDeleteError(null);
+    }, [activeTab, deleteInstallation, deleteServer]);
+
+    /** Primary, safe action: unlink from the launcher, leaving files on disk. */
+    const handleRemoveFromLauncher = useCallback(() => {
+        if (!deleteTarget) return;
+        removeRecord(deleteTarget.id);
+    }, [deleteTarget, removeRecord]);
+
+    /** Destructive action: move files to the Recycle Bin, then unlink. */
+    const handleDeleteFiles = useCallback(async () => {
         if (!deleteTarget) return;
         const { id, path: itemPath } = deleteTarget;
 
-        // Attempt to delete physical files.  Surface any error to the user
+        // Attempt to recycle physical files.  Surface any error to the user
         // before removing the store record so they understand what happened.
         if (!deleteTarget.isRemote && itemPath && typeof window !== 'undefined' && window.launcher?.installation) {
             try {
@@ -198,17 +215,46 @@ const [deleteTarget, setDeleteTarget] = useState<ManagedItem | null>(null);
             }
         }
 
-        if (activeTab === 'installations') deleteInstallation(id);
-        else deleteServer(id);
-
-        setDeleteTarget(null);
-        setDeleteError(null);
-    }, [deleteTarget, activeTab, deleteInstallation, deleteServer]);
+        removeRecord(id);
+    }, [deleteTarget, removeRecord]);
 
     const handleDeleteCancel = useCallback(() => {
         setDeleteTarget(null);
         setDeleteError(null);
     }, []);
+
+    // ── Import existing installation (empty-state CTA) ────────────────────────
+    const { importInstallations } = useLegacyInstallImporter();
+    const [importError, setImportError] = useState<string | null>(null);
+    const [isImporting, setIsImporting] = useState(false);
+
+    const handleImportExisting = useCallback(async () => {
+        if (typeof window === 'undefined' || !window.launcher?.dialog?.openFolder || !window.launcher?.legacy?.scanFolder) {
+            return;
+        }
+        setImportError(null);
+        setIsImporting(true);
+        try {
+            const folderPath = await window.launcher.dialog.openFolder();
+            if (!folderPath) return;
+
+            const found = await window.launcher.legacy.scanFolder(folderPath);
+            const deduped = dedupeLegacyInstallPaths(found ?? []);
+            if (deduped.length === 0) {
+                setImportError('No StarMade installation was found in that folder.');
+                return;
+            }
+
+            const { imported } = await importInstallations(deduped);
+            if (imported.length === 0) {
+                setImportError('That installation could not be imported — it may already be added.');
+            }
+        } catch (err) {
+            setImportError(String(err));
+        } finally {
+            setIsImporting(false);
+        }
+    }, [importInstallations]);
 
     const handleRestore = useCallback((item: ManagedItem) => {
         setRestoreTarget(item);
@@ -325,27 +371,66 @@ const [deleteTarget, setDeleteTarget] = useState<ManagedItem | null>(null);
                     </button>
                 </div>
                 <div className="flex-grow space-y-4 overflow-y-auto pr-4">
-                    {items.map((item, index) => (
-                        <ItemCard 
-                            key={item.id} 
-                            item={item} 
-                            isFeatured={index === 0} 
-                            showServerModeBadge={activeTab === 'servers'}
-                            onEdit={handleEdit}
-                            onDelete={handleDelete}
-                            actionButtonText={cardActionButtonText}
-                            statusLabel={cardStatusLabel}
-                            statusValue={activeTab === 'installations'
-                                ? formatPlayTime(playTimeByInstallationMs[item.id] ?? 0)
-                                : item.lastPlayed}
-                            downloadStatus={downloadStatuses[item.id]}
-                            onDownload={() => handleItemDownload(item.id)}
-                            onCancelDownload={() => handleItemCancelDownload(item.id)}
-                            onAction={handleItemAction}
-                            onOpenFolder={typeof window !== 'undefined' && window.launcher?.shell ? handleOpenFolder : undefined}
-                            onRestore={activeTab === 'installations' ? handleRestore : undefined}
-                        />
-                    ))}
+                    {items.length === 0 ? (
+                        <div className="h-full flex flex-col items-center justify-center text-center px-6">
+                            <h3 className="font-display text-xl font-bold uppercase tracking-wider text-white">
+                                No {itemTypeName.toLowerCase()}s yet
+                            </h3>
+                            <p className="mt-3 max-w-md text-sm text-gray-400 leading-relaxed">
+                                {activeTab === 'installations'
+                                    ? 'Create a new installation to download the game, or import an existing StarMade folder you already have on disk.'
+                                    : `Create a new ${itemTypeName.toLowerCase()} to get started.`}
+                            </p>
+                            <div className="mt-6 flex items-center gap-4 flex-wrap justify-center">
+                                <button
+                                    onClick={handleCreateNew}
+                                    className="flex items-center gap-2 px-5 py-2.5 rounded-md bg-starmade-accent hover:brightness-110 transition-colors text-white font-bold uppercase tracking-wider text-sm"
+                                >
+                                    <PlusIcon className="w-5 h-5" />
+                                    <span>Create new {itemTypeName.toLowerCase()}</span>
+                                </button>
+                                {activeTab === 'installations'
+                                    && typeof window !== 'undefined'
+                                    && window.launcher?.dialog?.openFolder
+                                    && window.launcher?.legacy?.scanFolder && (
+                                    <button
+                                        onClick={() => { void handleImportExisting(); }}
+                                        disabled={isImporting}
+                                        className="px-5 py-2.5 rounded-md border border-white/20 text-white font-semibold uppercase tracking-wider text-sm hover:bg-white/10 hover:border-white/30 transition-colors disabled:opacity-60"
+                                    >
+                                        {isImporting ? 'Importing…' : 'Import existing installation'}
+                                    </button>
+                                )}
+                            </div>
+                            {importError && (
+                                <p className="mt-4 text-xs text-red-300 bg-red-900/20 border border-red-900/40 rounded-md px-3 py-2 max-w-md">
+                                    {importError}
+                                </p>
+                            )}
+                        </div>
+                    ) : (
+                        items.map((item, index) => (
+                            <ItemCard
+                                key={item.id}
+                                item={item}
+                                isFeatured={index === 0}
+                                showServerModeBadge={activeTab === 'servers'}
+                                onEdit={handleEdit}
+                                onDelete={handleDelete}
+                                actionButtonText={cardActionButtonText}
+                                statusLabel={cardStatusLabel}
+                                statusValue={activeTab === 'installations'
+                                    ? formatPlayTime(playTimeByInstallationMs[item.id] ?? 0)
+                                    : item.lastPlayed}
+                                downloadStatus={downloadStatuses[item.id]}
+                                onDownload={() => handleItemDownload(item.id)}
+                                onCancelDownload={() => handleItemCancelDownload(item.id)}
+                                onAction={handleItemAction}
+                                onOpenFolder={typeof window !== 'undefined' && window.launcher?.shell ? handleOpenFolder : undefined}
+                                onRestore={activeTab === 'installations' ? handleRestore : undefined}
+                            />
+                        ))
+                    )}
                 </div>
             </div>
         );
@@ -358,8 +443,10 @@ const [deleteTarget, setDeleteTarget] = useState<ManagedItem | null>(null);
             isOpen={deleteTarget !== null}
             itemName={deleteTarget?.name ?? ''}
             itemTypeName={itemTypeName}
+            itemPath={deleteTarget?.isRemote ? undefined : deleteTarget?.path}
             error={deleteError}
-            onConfirm={handleDeleteConfirm}
+            onRemoveFromLauncher={handleRemoveFromLauncher}
+            onDeleteFiles={handleDeleteFiles}
             onCancel={handleDeleteCancel}
         />
         <BackupConfirmModal

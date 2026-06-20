@@ -82,8 +82,9 @@ describe('App first-launch legacy import prompt', () => {
       isLoaded: true,
     });
 
-    // Default: auto-import fails so the modal becomes visible after the attempt.
-    mockImportInstallations.mockRejectedValue(new Error('auto-import mock failure'));
+    // Default: importInstallations is never called unless the user explicitly clicks
+    // Import. Reject by default so any accidental silent import would fail the test.
+    mockImportInstallations.mockRejectedValue(new Error('import should not run automatically'));
 
     (window as unknown as Record<string, unknown>).launcher = {
       store: {
@@ -152,10 +153,9 @@ describe('App first-launch legacy import prompt', () => {
       return undefined;
     });
 
-    // First call is the silent auto-import attempt (fails so the modal stays visible).
-    // Subsequent calls are the user-triggered retry (succeeds and produces the expected side effects).
+    // Legacy installs are never imported silently — the modal stays visible until the
+    // user clicks Import, which triggers this (successful) import.
     mockImportInstallations
-      .mockRejectedValueOnce(new Error('auto-import mock failure'))
       .mockImplementation(async (paths: string[]) => {
         for (const p of paths) {
           const version = await readVersion(p);
@@ -182,7 +182,7 @@ describe('App first-launch legacy import prompt', () => {
 
     expect(screen.getByText('Import Old StarMade Installations')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: /Retry Import/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Import' }));
 
     await waitFor(() => {
       expect(addInstallation).toHaveBeenCalledWith(expect.objectContaining({

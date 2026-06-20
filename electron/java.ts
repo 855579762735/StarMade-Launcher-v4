@@ -338,15 +338,57 @@ export function parseJavaVersion(versionOutput: string): number | null {
 }
 
 /**
- * Check if a Java executable is valid and return its version.
+ * Parse the JVM bitness (architecture data model) from `java -version` output.
+ *
+ * The third line of `java -version` describes the VM, e.g.:
+ *   64-bit: "OpenJDK 64-Bit Server VM (build 21.0.0+35)"
+ *           "Java HotSpot(TM) 64-Bit Server VM ..."
+ *   32-bit: "OpenJDK Server VM (build ...)"
+ *           "Java HotSpot(TM) Client VM ..."
+ *
+ * A 32-bit JVM cannot address a heap >= ~4 GB, so `-Xms4096M`/`-Xmx4096M` (or
+ * larger) fail with "Invalid initial heap size … exceeds the maximum
+ * representable size". We use this to avoid selecting a 32-bit runtime.
+ *
+ * @returns 64 or 32, or null when the VM line is absent/unrecognized.
  */
-export async function checkJavaExecutable(javaPath: string): Promise<{ version: number; path: string } | null> {
+export function parseJavaBitness(versionOutput: string): 64 | 32 | null {
+	if (!versionOutput) return null;
+	// Only classify when we actually saw a VM description line.
+	if (!/\bVM\b/i.test(versionOutput)) return null;
+	return /64-bit/i.test(versionOutput) ? 64 : 32;
+}
+
+/**
+ * Pick the executable to run for a `-version` probe.
+ *
+ * On Windows the launch binary is `javaw.exe` (no console window), but `javaw.exe`
+ * does not reliably write `-version` output to a piped stderr — so probing it makes
+ * a perfectly good runtime look absent, which in turn triggers a redundant Java
+ * download. When the path is a `javaw.exe`, probe the sibling console binary
+ * `java.exe` instead (falling back to the given path if `java.exe` is missing). The
+ * launch path the caller stores is unchanged — only the probe target differs.
+ */
+export function versionProbePath(javaPath: string): string {
+	if (process.platform !== 'win32') return javaPath;
+	if (path.basename(javaPath).toLowerCase() !== 'javaw.exe') return javaPath;
+	const consolePath = path.join(path.dirname(javaPath), 'java.exe');
+	return fs.existsSync(consolePath) ? consolePath : javaPath;
+}
+
+/**
+ * Check if a Java executable is valid and return its version and bitness.
+ * `arch` is 64 or 32 when it can be determined, otherwise null.
+ */
+export async function checkJavaExecutable(
+	javaPath: string,
+): Promise<{ version: number; path: string; arch: 64 | 32 | null } | null> {
 	try {
-		const { stderr } = await execFileAsync(javaPath, ['-version']);
+		const { stderr } = await execFileAsync(versionProbePath(javaPath), ['-version']);
 		const version = parseJavaVersion(stderr);
 
 		if (version) {
-			return { version, path: javaPath };
+			return { version, path: javaPath, arch: parseJavaBitness(stderr) };
 		}
 	} catch (error) {
 		// Executable doesn't exist or failed to run
@@ -356,75 +398,113 @@ export async function checkJavaExecutable(javaPath: string): Promise<{ version: 
 }
 
 /**
- * Detect system-installed Java runtimes by scanning common install paths.
+ * Build the list of directories to scan for system-installed Java runtimes.
+ *
+ * Each entry is treated as a *vendor parent* that holds one versioned JDK/JRE
+ * subdirectory per install (e.g. `…\Amazon Corretto\jdk21…`), and is also probed
+ * directly in case it is itself a JDK root (e.g. `JAVA_HOME`).
+ *
+ * Pure and platform-parameterized so it can be unit-tested. Windows roots are
+ * derived from environment variables rather than a hardcoded `C:` so non-default
+ * drive letters and per-user installs are covered.
  */
-export async function detectSystemJava(): Promise<Array<{ version: string; path: string }>> {
-	const results: Array<{ version: string; path: string }> = [];
-	const javaExe = process.platform === 'win32' ? 'javaw.exe' : 'java';
+export function getSystemJavaSearchPaths(
+	env: NodeJS.ProcessEnv,
+	platform: NodeJS.Platform,
+): string[] {
+	const paths: string[] = [];
+	const add = (p: string | undefined) => { if (p) paths.push(p); };
 
-	// Common Java installation paths per platform
-	let searchPaths: string[] = [];
+	if (platform === 'win32') {
+		const programFiles = env.ProgramFiles ?? 'C:\\Program Files';
+		const programFilesX86 = env['ProgramFiles(x86)'] ?? 'C:\\Program Files (x86)';
+		const localAppData = env.LOCALAPPDATA;
 
-	if (process.platform === 'win32') {
-		searchPaths = [
-			'C:\\Program Files\\Java',
-			'C:\\Program Files (x86)\\Java',
-			'C:\\Program Files\\Eclipse Adoptium',
-			'C:\\Program Files\\Temurin',
+		// Common vendor parent directories. Each holds versioned JDK/JRE subfolders.
+		const vendorDirs = [
+			'Java',                 // Oracle
+			'Eclipse Adoptium',     // Temurin (current)
+			'Eclipse Foundation',   // Temurin (older)
+			'Temurin',
+			'Amazon Corretto',
+			'Zulu',                 // Azul
+			'Microsoft',            // Microsoft Build of OpenJDK (Microsoft\jdk-*)
+			'Semeru',               // IBM Semeru
+			'IBM',
+			'BellSoft\\LibericaJDK',
+			'AdoptOpenJDK',         // legacy AdoptOpenJDK
+			'RedHat',               // Red Hat build of OpenJDK
 		];
-
-		// Add JAVA_HOME if set
-		if (process.env.JAVA_HOME) {
-			searchPaths.push(process.env.JAVA_HOME);
+		for (const base of [programFiles, programFilesX86]) {
+			for (const vendor of vendorDirs) add(path.join(base, vendor));
 		}
-	} else if (process.platform === 'darwin') {
-		searchPaths = [
-			'/Library/Java/JavaVirtualMachines',
-			'/System/Library/Java/JavaVirtualMachines',
-		];
 
-		if (process.env.JAVA_HOME) {
-			searchPaths.push(process.env.JAVA_HOME);
+		// Per-user installs (winget / "install for me only").
+		if (localAppData) {
+			add(path.join(localAppData, 'Programs', 'Eclipse Adoptium'));
+			add(path.join(localAppData, 'Programs', 'Microsoft'));
+			add(path.join(localAppData, 'Programs', 'Java'));
+			add(path.join(localAppData, 'Eclipse Adoptium'));
 		}
+	} else if (platform === 'darwin') {
+		add('/Library/Java/JavaVirtualMachines');
+		add('/System/Library/Java/JavaVirtualMachines');
 	} else {
-		// Linux
-		searchPaths = [
-			'/usr/lib/jvm',
-			'/usr/java',
-			'/opt/java',
-			'/usr/lib64/jvm',
-		];
-
-		if (process.env.JAVA_HOME) {
-			searchPaths.push(process.env.JAVA_HOME);
-		}
+		add('/usr/lib/jvm');
+		add('/usr/java');
+		add('/opt/java');
+		add('/usr/lib64/jvm');
 	}
 
-	// Scan each path
+	// JAVA_HOME points directly at a JDK root; it is probed both directly and as a
+	// parent (harmless when it has no version subdirs).
+	add(env.JAVA_HOME);
+
+	// De-duplicate while preserving order.
+	return [...new Set(paths.map(p => path.normalize(p)))];
+}
+
+/**
+ * Detect system-installed Java runtimes by scanning common install paths.
+ */
+export async function detectSystemJava(): Promise<Array<{ version: string; path: string; arch: 64 | 32 | null }>> {
+	const results: Array<{ version: string; path: string; arch: 64 | 32 | null }> = [];
+	const javaExe = process.platform === 'win32' ? 'javaw.exe' : 'java';
+
+	const searchPaths = getSystemJavaSearchPaths(process.env, process.platform);
+
+	// Resolve the bin/<javaExe> path for a given JDK/JRE root directory.
+	const binPathFor = (root: string): string =>
+		process.platform === 'darwin'
+			? path.join(root, 'Contents', 'Home', 'bin', javaExe)
+			: path.join(root, 'bin', javaExe);
+
+	const considerRoot = async (root: string): Promise<void> => {
+		const result = await checkJavaExecutable(binPathFor(root));
+		if (!result) return;
+		// StarMade needs a 64-bit JVM (large heaps). A 32-bit Java rejects
+		// -Xms/-Xmx >= ~4 GB, so don't offer it.
+		if (result.arch === 32) {
+			console.log(`[Java] Ignoring 32-bit Java at ${result.path}`);
+			return;
+		}
+		if (!results.some(r => r.path === result.path)) {
+			results.push({ version: String(result.version), path: result.path, arch: result.arch });
+		}
+	};
+
+	// Scan each path: probe it directly (it may itself be a JDK root, e.g. JAVA_HOME)
+	// and probe each immediate subdirectory (vendor-parent layout).
 	for (const searchPath of searchPaths) {
 		if (!fs.existsSync(searchPath)) continue;
 
+		await considerRoot(searchPath);
+
 		try {
 			const entries = fs.readdirSync(searchPath, { withFileTypes: true });
-
 			for (const entry of entries) {
 				if (!entry.isDirectory()) continue;
-
-				const baseDir = path.join(searchPath, entry.name);
-				let javaPath: string;
-
-				// Platform-specific path to bin/java
-				if (process.platform === 'darwin') {
-					javaPath = path.join(baseDir, 'Contents', 'Home', 'bin', javaExe);
-				} else {
-					javaPath = path.join(baseDir, 'bin', javaExe);
-				}
-
-				// Check if the executable exists and works
-				const result = await checkJavaExecutable(javaPath);
-				if (result) {
-					results.push({ version: String(result.version), path: result.path });
-				}
+				await considerRoot(path.join(searchPath, entry.name));
 			}
 		} catch (error) {
 			// Skip directories we can't read
@@ -436,13 +516,14 @@ export async function detectSystemJava(): Promise<Array<{ version: string; path:
 	try {
 		const { stderr } = await execFileAsync('java', ['-version']);
 		const version = parseJavaVersion(stderr);
-		if (version) {
+		const arch = parseJavaBitness(stderr);
+		if (version && arch !== 32) {
 			const { stdout } = await execFileAsync(process.platform === 'win32' ? 'where' : 'which', ['java']);
 			const javaPath = stdout.trim().split('\n')[0];
 
 			// Only add if not already in results
 			if (!results.some(r => r.path === javaPath)) {
-				results.push({ version: String(version), path: javaPath });
+				results.push({ version: String(version), path: javaPath, arch });
 			}
 		}
 	} catch (error) {
@@ -470,9 +551,12 @@ export async function resolveJavaPath(requiredVersion: 8 | 21, launcherDir: stri
 		const bundledJavaPath = findJavaExecutableInDir(jreDir);
 		if (bundledJavaPath) {
 			const result = await checkJavaExecutable(bundledJavaPath);
-			if (result && result.version === requiredVersion) {
+			if (result && result.version === requiredVersion && result.arch !== 32) {
 				console.log(`[Java] Using bundled Java ${requiredVersion}: ${bundledJavaPath}`);
 				return bundledJavaPath;
+			}
+			if (result && result.arch === 32) {
+				console.warn(`[Java] Bundled Java at ${bundledJavaPath} is 32-bit — ignoring (cannot allocate large heaps)`);
 			}
 		}
 	}
@@ -489,6 +573,55 @@ export async function resolveJavaPath(requiredVersion: 8 | 21, launcherDir: stri
 	// 3. Not found
 	console.log(`[Java] Java ${requiredVersion} not found`);
 	return null;
+}
+
+/**
+ * Resolve a usable Java for `version`, downloading it only if none is available.
+ *
+ * Resolution order:
+ *   1. `preferredPath` (e.g. an installation's stored customJavaPath) when it
+ *      exists on disk, is the required major version, and is 64-bit →
+ *      `usedPreferred: true`.
+ *   2. A bundled or system runtime via `resolveJavaPath()` → `usedPreferred: false`.
+ *   3. Download from Adoptium → `downloaded: true`.
+ *
+ * This mirrors `launchGame()`'s custom-path-then-auto-resolve logic in a single
+ * shared place, so the pre-launch "do we need to download?" decision and the launch
+ * itself never disagree (which is what caused redundant downloads).
+ */
+export async function ensureJava(
+	version: 8 | 21,
+	launcherDir: string,
+	opts: { preferredPath?: string } = {},
+	// Dependencies are injectable for testing; production callers use the defaults.
+	deps: {
+		exists?: (p: string) => boolean;
+		check?: typeof checkJavaExecutable;
+		resolve?: typeof resolveJavaPath;
+		download?: typeof downloadJava;
+	} = {},
+): Promise<{ path: string; downloaded: boolean; usedPreferred: boolean }> {
+	const exists = deps.exists ?? fs.existsSync;
+	const check = deps.check ?? checkJavaExecutable;
+	const resolve = deps.resolve ?? resolveJavaPath;
+	const download = deps.download ?? downloadJava;
+
+	const preferred = opts.preferredPath?.trim();
+	if (preferred && exists(preferred)) {
+		const detected = await check(preferred);
+		// arch !== 32 accepts 64-bit and unknown; only a confirmed 32-bit JVM is rejected.
+		if (detected && detected.version === version && detected.arch !== 32) {
+			return { path: preferred, downloaded: false, usedPreferred: true };
+		}
+	}
+
+	const resolved = await resolve(version, launcherDir);
+	if (resolved) {
+		return { path: resolved, downloaded: false, usedPreferred: false };
+	}
+
+	const downloaded = await download(version, launcherDir);
+	return { path: downloaded, downloaded: true, usedPreferred: false };
 }
 
 /**

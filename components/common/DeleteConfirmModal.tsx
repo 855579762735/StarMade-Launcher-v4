@@ -5,22 +5,43 @@ interface DeleteConfirmModalProps {
     isOpen: boolean;
     itemName: string;
     itemTypeName: string;
+    /**
+     * Absolute path of the installation on disk. Shown to the user so they can
+     * see exactly what "Delete files" would remove before committing.
+     */
+    itemPath?: string;
     error?: string | null;
-    onConfirm: () => void;
+    /** Remove the item from the launcher only; files on disk are left untouched. */
+    onRemoveFromLauncher: () => void;
+    /** Move the item's files to the Recycle Bin, then remove it from the launcher. */
+    onDeleteFiles: () => void;
     onCancel: () => void;
 }
 
+/**
+ * Two-step removal dialog.
+ *
+ * The safe, primary action is "Remove from launcher" — it only drops the record
+ * and never touches disk. "Delete files" is a clearly-marked secondary action
+ * that shows the exact path and moves the folder to the Recycle Bin (recoverable),
+ * so a user who accidentally tracked the wrong folder (e.g. Downloads) sees the
+ * path and stops before destroying data.
+ */
 const DeleteConfirmModal: React.FC<DeleteConfirmModalProps> = ({
     isOpen,
     itemName,
     itemTypeName,
+    itemPath,
     error,
-    onConfirm,
+    onRemoveFromLauncher,
+    onDeleteFiles,
     onCancel,
 }) => {
     if (!isOpen) {
         return null;
     }
+
+    const lowerType = itemTypeName.toLowerCase();
 
     return (
         <div
@@ -35,14 +56,26 @@ const DeleteConfirmModal: React.FC<DeleteConfirmModalProps> = ({
                     </div>
 
                     <h2 className="font-display text-2xl font-bold uppercase text-white tracking-wider">
-                        Delete {itemTypeName}?
+                        Remove {itemTypeName}?
                     </h2>
                     <p className="mt-3 text-gray-300 max-w-sm mx-auto leading-relaxed">
-                        Are you sure you want to delete{' '}
-                        <span className="font-semibold text-white">{itemName}</span>?
+                        Remove{' '}
+                        <span className="font-semibold text-white">{itemName}</span>{' '}
+                        from the launcher. Choose whether to keep the files on disk or
+                        move them to the Recycle Bin.
                     </p>
-                    <p className="mt-2 text-sm text-red-400 max-w-sm mx-auto leading-relaxed">
-                        This will permanently delete all game files on disk. This action cannot be undone.
+
+                    {itemPath && (
+                        <div className="mt-4 w-full text-xs text-gray-300 bg-black/30 border border-white/10 rounded-md px-3 py-2 text-left break-all">
+                            <span className="font-semibold text-gray-400">Folder on disk: </span>
+                            <span className="font-mono text-white">{itemPath}</span>
+                        </div>
+                    )}
+
+                    <p className="mt-3 text-sm text-gray-400 max-w-sm mx-auto leading-relaxed">
+                        <span className="font-semibold text-gray-300">Remove from launcher</span>{' '}
+                        leaves every file where it is. <span className="font-semibold text-red-300">Delete files</span>{' '}
+                        moves the folder above to the Recycle Bin — recoverable from there if it was a mistake.
                     </p>
 
                     {error && (
@@ -60,12 +93,22 @@ const DeleteConfirmModal: React.FC<DeleteConfirmModalProps> = ({
                         Cancel
                     </button>
                     <button
-                        onClick={onConfirm}
+                        onClick={onRemoveFromLauncher}
+                        className="px-6 py-2 rounded-md bg-starmade-accent hover:brightness-110 transition-colors text-sm font-bold uppercase tracking-wider"
+                    >
+                        Remove from launcher
+                    </button>
+                    <button
+                        onClick={onDeleteFiles}
                         className="px-6 py-2 rounded-md bg-starmade-danger hover:bg-starmade-danger-hover transition-colors text-sm font-bold uppercase tracking-wider shadow-danger hover:shadow-danger-hover"
                     >
-                        Delete Files
+                        Delete files
                     </button>
                 </div>
+
+                <p className="mt-3 text-center text-[11px] text-gray-500">
+                    "Remove from launcher" is the safe option — it never deletes any {lowerType} files.
+                </p>
 
                 <button
                     onClick={onCancel}

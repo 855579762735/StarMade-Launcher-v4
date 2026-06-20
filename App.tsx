@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import Header from './components/layout/Header';
 import Footer from './components/layout/Footer';
 import News from './components/pages/News';
@@ -162,52 +162,22 @@ const App: React.FC = () => {
     return cleanup;
   }, [legacyPromptState, persistLegacyPromptState]);
 
-  // Tracks whether we've already fired the one-shot auto-import for this session.
-  // Keeps the effect from re-triggering after a partial failure updates the state.
-  const autoImportAttemptedRef = useRef(false);
-
+  // Legacy installs are NEVER imported silently. When a scan surfaces pending
+  // paths the LegacyImportPromptModal is shown so the user explicitly confirms the
+  // import (its "Import" button calls handleImportLegacyInstallations). When every
+  // pending path is already tracked, collapse the state to 'imported' so the modal
+  // does not linger.
   useEffect(() => {
     if (!isDataLoaded || !isLegacyPromptStateLoaded || legacyPromptState?.status !== 'pending') return;
-
     if (pendingLegacyPromptPaths.length === 0) {
-      // All paths already present — nothing left to import.
       void persistLegacyPromptState(createLegacyImportPromptState('imported'));
-      return;
     }
-
-    // Auto-import silently on first opportunity.  If it partially or fully fails,
-    // show the modal so the user can retry manually.
-    if (autoImportAttemptedRef.current) return;
-    autoImportAttemptedRef.current = true;
-
-    setIsLegacyPromptHidden(true);
-    setIsLegacyImporting(true);
-
-    importInstallations(pendingLegacyPromptPaths)
-      .then(({ imported }) => {
-        const remainingPaths = pendingLegacyPromptPaths.filter(p => !imported.includes(p));
-        if (remainingPaths.length === 0) {
-          void persistLegacyPromptState(createLegacyImportPromptState('imported'));
-        } else {
-          setLegacyImportError('Some installations could not be imported automatically. You can retry below or add them manually in Launcher Settings.');
-          setIsLegacyPromptHidden(false);
-          void persistLegacyPromptState(createLegacyImportPromptState('pending', remainingPaths));
-        }
-      })
-      .catch(() => {
-        setLegacyImportError('Failed to import legacy installations automatically. You can retry below or add them manually in Launcher Settings.');
-        setIsLegacyPromptHidden(false);
-      })
-      .finally(() => {
-        setIsLegacyImporting(false);
-      });
   }, [
     isDataLoaded,
     isLegacyPromptStateLoaded,
     legacyPromptState,
     pendingLegacyPromptPaths,
     persistLegacyPromptState,
-    importInstallations,
   ]);
 
   useEffect(() => {

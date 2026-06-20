@@ -53,6 +53,8 @@ export const IPC = {
   JAVA_LIST: 'java:list',
   /** Renderer → Main (invoke): download and install a Java runtime (8 or 21). */
   JAVA_DOWNLOAD: 'java:download',
+  /** Renderer → Main (invoke): ensure a usable Java for a version, downloading only if needed. */
+  JAVA_ENSURE: 'java:ensure',
   /** Renderer → Main (invoke): scan for system-installed Java versions. */
   JAVA_DETECT: 'java:detect',
   /** Renderer → Main (invoke): get default Java paths for jre8 and jre21. */

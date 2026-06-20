@@ -118,6 +118,17 @@ const launcherApi = {
     download: (version: 8 | 21): Promise<{ success: boolean; path?: string; error?: string }> =>
       ipcRenderer.invoke(IPC.JAVA_DOWNLOAD, version),
 
+    /**
+     * Ensure a usable Java for `version` is available, downloading only if needed.
+     * Optionally pass the installation's current Java path as `preferredPath` so a
+     * valid user override is kept (reported via `usedPreferred`).
+     */
+    ensure: (
+      version: 8 | 21,
+      preferredPath?: string,
+    ): Promise<{ success: boolean; path?: string; downloaded?: boolean; usedPreferred?: boolean; error?: string }> =>
+      ipcRenderer.invoke(IPC.JAVA_ENSURE, version, preferredPath),
+
     /** Scan for system-installed Java versions. */
     detect: (): Promise<Array<{ version: string; path: string; source: string }>> =>
       ipcRenderer.invoke(IPC.JAVA_DETECT),

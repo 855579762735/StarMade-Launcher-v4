@@ -118,6 +118,15 @@ declare global {
         }>;
         /** Download and install a Java runtime (8 or 21). */
         download: (version: 8 | 21) => Promise<{ success: boolean; path?: string; error?: string }>;
+        /**
+         * Ensure a usable Java for the version is available, downloading only if
+         * needed. `preferredPath` (e.g. an install's customJavaPath) is kept when
+         * still valid, reported via `usedPreferred`.
+         */
+        ensure: (
+          version: 8 | 21,
+          preferredPath?: string,
+        ) => Promise<{ success: boolean; path?: string; downloaded?: boolean; usedPreferred?: boolean; error?: string }>;
         /** Scan for system-installed Java versions. */
         detect: () => Promise<Array<{ version: string; path: string; source: string }>>;
         /** Get default Java paths for jre8 and jre21. */

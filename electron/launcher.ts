@@ -448,7 +448,15 @@ export async function launchGame(options: LaunchOptions): Promise<LaunchResult> 
     if (customJavaPath) {
       if (fs.existsSync(customJavaPath)) {
         const detected = await checkJavaExecutable(customJavaPath);
-        if (detected && detected.version === requiredJavaVersion) {
+        if (detected && detected.version === requiredJavaVersion && detected.arch === 32) {
+          // A 32-bit JVM cannot allocate heaps >= ~4 GB. StarMade's memory
+          // sliders routinely exceed that, so launching would fail with
+          // "Invalid initial heap size … exceeds the maximum representable
+          // size". Ignore it and auto-resolve a 64-bit runtime instead.
+          console.warn(
+            `[Launcher] Custom Java path ${customJavaPath} is 32-bit — falling back to auto-resolve (64-bit required for large heaps)`,
+          );
+        } else if (detected && detected.version === requiredJavaVersion) {
           javaPath = customJavaPath;
         } else {
           console.warn(

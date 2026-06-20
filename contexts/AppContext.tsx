@@ -16,7 +16,7 @@ const DEFAULT_LAUNCHER_SETTINGS: LauncherSettingsData = {
 const POST_LAUNCH_CLOSE_DELAY_MS = 250;
 
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-    const { activeAccount, installations, servers, versions, isLoaded: isDataLoaded, recordSession } = useData();
+    const { activeAccount, installations, servers, versions, isLoaded: isDataLoaded, recordSession, updateInstallation } = useData();
     const [activePage, setActivePage] = useState<Page>('Play');
     const [pageProps, setPageProps] = useState<PageProps>({});
     const [isLaunchModalOpen, setIsLaunchModalOpen] = useState(false);
@@ -198,30 +198,46 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         // download and the launch would then fail to find a Java 21 runtime.
         const manifestEntry = versions?.find(v => v.id === installation.version);
         const requiredJava = manifestEntry?.requiredJavaVersion ?? installation.requiredJavaVersion;
-        if (requiredJava && window.launcher.java) {
-            try {
-                const runtimes = await window.launcher.java.list();
-                const allRuntimes = [...runtimes.bundled, ...runtimes.system];
-                const hasJava = allRuntimes.some(j => {
-                    const v = parseInt(j.version, 10);
-                    return requiredJava === 8
-                        ? (v >= 8 && v < 9)
-                        : (v >= requiredJava && v < requiredJava + 1);
-                });
 
-                if (!hasJava) {
-                    setLaunchStatus(`Downloading Java ${requiredJava}…`);
-                    const result = await window.launcher.java.download(requiredJava);
-                    if (!result.success) {
-                        setLaunchError(`Java ${requiredJava} is required but could not be downloaded: ${result.error ?? 'unknown error'}`);
-                        setIsLaunching(false);
-                        setLaunchStatus(null);
-                        return;
+        // Java path the game will launch with. Defaults to the install's stored
+        // override; replaced below with whatever `java.ensure` resolves (which is
+        // verified to be the right major version and 64-bit), so a stale stored path
+        // never reaches the launcher.
+        let javaPathForLaunch = installation.customJavaPath;
+
+        if (requiredJava && window.launcher.java?.ensure) {
+            try {
+                setLaunchStatus(`Checking Java ${requiredJava}…`);
+                // Resolve-or-download in one authoritative step. Passing the install's
+                // current path as the preferred candidate keeps a valid user override.
+                const ensure = await window.launcher.java.ensure(requiredJava, installation.customJavaPath);
+                if (!ensure.success || !ensure.path) {
+                    setLaunchError(`Java ${requiredJava} is required but could not be prepared: ${ensure.error ?? 'unknown error'}`);
+                    setIsLaunching(false);
+                    setLaunchStatus(null);
+                    return;
+                }
+
+                javaPathForLaunch = ensure.path;
+
+                // Persist the resolved runtime unless the install already pointed at a
+                // valid Java (usedPreferred). This refreshes installs whose stored path
+                // went stale after a Java 8 → 21 game update, and keeps the default
+                // settings' javaPath8/21 in sync — without clobbering a user override.
+                if (!ensure.usedPreferred && !installation.isRemote) {
+                    updateInstallation({ ...installation, customJavaPath: ensure.path });
+                    try {
+                        const storeKey = 'defaultInstallationSettings';
+                        const current = (await window.launcher.store?.get(storeKey)) as Record<string, unknown> | undefined;
+                        const fieldKey = requiredJava === 21 ? 'javaPath21' : 'javaPath8';
+                        await window.launcher.store?.set(storeKey, { ...(current ?? {}), [fieldKey]: ensure.path });
+                    } catch (persistErr) {
+                        console.warn('[AppContext] Failed to persist default Java path:', persistErr);
                     }
                 }
             } catch (err) {
-                // Non-fatal — proceed and let the launcher handle missing Java
-                console.warn('[AppContext] Java pre-check failed:', err);
+                // Non-fatal — proceed and let the launcher handle Java resolution.
+                console.warn('[AppContext] Java ensure failed:', err);
             } finally {
                 setLaunchStatus(null);
             }
@@ -235,7 +251,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
                 minMemory: installation.minMemory ?? 1024,
                 maxMemory: installation.maxMemory ?? 8192,
                 jvmArgs: installation.jvmArgs ?? '',
-                customJavaPath: installation.customJavaPath,
+                customJavaPath: javaPathForLaunch,
                 isServer: false,
                 // Pass the active account id so the main process can inject the
                 // registry auth token as a -auth <token> argument to the game.

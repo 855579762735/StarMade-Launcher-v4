@@ -194,6 +194,108 @@ describe('AppContext post-launch behavior', () => {
   });
 });
 
+describe('AppContext Java pre-launch (ensure + persist)', () => {
+  const java21Install: ManagedItem = {
+    id: 'install-21',
+    name: 'Java 21 Install',
+    version: '0.300.0',
+    type: 'release',
+    icon: 'release',
+    path: '/tmp/sm21',
+    lastPlayed: 'Never',
+    requiredJavaVersion: 21,
+    customJavaPath: '/old/java8',
+  };
+
+  const Java21Harness: React.FC = () => {
+    const { openLaunchModal } = useApp();
+    return <button onClick={() => void openLaunchModal(java21Install)}>Launch21</button>;
+  };
+
+  let updateInstallation: ReturnType<typeof vi.fn>;
+
+  const flush = async () => {
+    await act(async () => {
+      for (let i = 0; i < 6; i++) await Promise.resolve();
+    });
+  };
+
+  beforeEach(() => {
+    updateInstallation = vi.fn();
+    mockUseData.mockReturnValue({
+      activeAccount: null,
+      installations: [java21Install],
+      versions: [],
+      recordSession: mockRecordSession,
+      updateInstallation,
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    delete (window as unknown as Record<string, unknown>).launcher;
+  });
+
+  const setupLauncher = (ensureResult: Record<string, unknown>) => {
+    const launch = vi.fn().mockResolvedValue({ success: true, pid: 1 });
+    const ensure = vi.fn().mockResolvedValue(ensureResult);
+    const download = vi.fn();
+    const set = vi.fn().mockResolvedValue(undefined);
+    (window as unknown as Record<string, unknown>).launcher = {
+      game: { launch, listRunning: vi.fn().mockResolvedValue([]) },
+      java: { ensure, download },
+      store: { get: vi.fn().mockResolvedValue({ closeBehavior: 'Keep the launcher open' }), set },
+      window: { close: vi.fn(), hide: vi.fn(), minimize: vi.fn() },
+    };
+    return { launch, ensure, download, set };
+  };
+
+  it('does not download when a usable Java already exists, and launches with it', async () => {
+    const { launch, ensure, download } = setupLauncher({
+      success: true, path: '/old/java8', downloaded: false, usedPreferred: true,
+    });
+
+    render(<AppProvider><Java21Harness /></AppProvider>);
+    await act(async () => { fireEvent.click(screen.getByText('Launch21')); });
+    await flush();
+
+    expect(ensure).toHaveBeenCalledWith(21, '/old/java8');
+    expect(download).not.toHaveBeenCalled();
+    expect(updateInstallation).not.toHaveBeenCalled();
+    expect(launch).toHaveBeenCalledTimes(1);
+    expect(launch.mock.calls[0][0]).toMatchObject({ customJavaPath: '/old/java8' });
+  });
+
+  it('refreshes the stale install path and default setting when a new runtime is resolved', async () => {
+    const { launch, set } = setupLauncher({
+      success: true, path: '/jre21/bin/javaw.exe', downloaded: false, usedPreferred: false,
+    });
+
+    render(<AppProvider><Java21Harness /></AppProvider>);
+    await act(async () => { fireEvent.click(screen.getByText('Launch21')); });
+    await flush();
+
+    expect(updateInstallation).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'install-21', customJavaPath: '/jre21/bin/javaw.exe' }),
+    );
+    expect(set).toHaveBeenCalledWith(
+      'defaultInstallationSettings',
+      expect.objectContaining({ javaPath21: '/jre21/bin/javaw.exe' }),
+    );
+    expect(launch.mock.calls[0][0]).toMatchObject({ customJavaPath: '/jre21/bin/javaw.exe' });
+  });
+
+  it('aborts the launch when Java cannot be prepared', async () => {
+    const { launch } = setupLauncher({ success: false, error: 'network down' });
+
+    render(<AppProvider><Java21Harness /></AppProvider>);
+    await act(async () => { fireEvent.click(screen.getByText('Launch21')); });
+    await flush();
+
+    expect(launch).not.toHaveBeenCalled();
+  });
+});
+
 describe('AppContext server-panel migration', () => {
   beforeEach(() => {
     mockRecordSession.mockReset();
