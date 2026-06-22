@@ -454,6 +454,14 @@ export class AzureVmBackend implements IRemoteBackend {
       }
     };
 
+    // Without an 'error' listener Node rethrows the child's async 'error' event
+    // (ENOENT, EPIPE, …) as an uncaught exception that crashes the main process.
+    proc.on('error', (err) => {
+      emitLine(`[StarMade Launcher] SSH log stream error: ${err.message}`, 'ssh-stderr');
+    });
+    proc.stdout?.on('error', () => { /* ignore stream teardown errors */ });
+    proc.stderr?.on('error', () => { /* ignore stream teardown errors */ });
+
     proc.stdout?.on('data', (chunk: Buffer) => {
       for (const line of chunk.toString('utf8').split('\n')) emitLine(line, 'ssh-stdout');
     });

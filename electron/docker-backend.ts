@@ -349,6 +349,8 @@ export class DockerBackend implements IRemoteBackend {
         finish(false, 'docker command timed out.');
       }, timeoutMs);
 
+      proc.stdout?.on('error', () => { /* ignore stream teardown errors */ });
+      proc.stderr?.on('error', () => { /* ignore stream teardown errors */ });
       proc.stdout?.on('data', (chunk: Buffer) => { stdout += chunk.toString('utf8'); });
       proc.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString('utf8'); });
       proc.on('error', (err) => finish(false, err.message));
@@ -366,7 +368,7 @@ export class DockerBackend implements IRemoteBackend {
 
     let proc: ChildProcess;
     try {
-      proc = spawn('docker', fullArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
+      proc = spawn('docker', fullArgs, { stdio: ['ignore', 'pipe', 'pipe'], env: dockerSpawnEnv() });
     } catch (error) {
       this.onRuntimeEvent({
         version: 1,
@@ -383,6 +385,15 @@ export class DockerBackend implements IRemoteBackend {
         this.onRuntimeEvent({ version: 1, serverId, line: line.trimEnd(), source });
       }
     };
+
+    // A long-running child emits 'error' asynchronously (e.g. ENOENT, EPIPE).
+    // Without a listener Node rethrows it as an uncaught exception that crashes
+    // the whole main process, so this handler must always be present.
+    proc.on('error', (err) => {
+      emitLine(`[StarMade Launcher] Docker log stream error: ${err.message}`, 'ssh-stderr');
+    });
+    proc.stdout?.on('error', () => { /* ignore stream teardown errors */ });
+    proc.stderr?.on('error', () => { /* ignore stream teardown errors */ });
 
     proc.stdout?.on('data', (chunk: Buffer) => {
       for (const line of chunk.toString('utf8').split('\n')) emitLine(line, 'ssh-stdout');
