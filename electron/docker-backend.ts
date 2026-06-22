@@ -16,6 +16,7 @@
 // auth must be available to the local ssh agent.
 
 import { spawn, type ChildProcess } from 'node:child_process';
+import os from 'node:os';
 import type {
   IRemoteBackend,
   RemoteConnectOptions,
@@ -48,6 +49,40 @@ interface DockerSession {
 function dockerBaseArgs(session: Pick<DockerSession, 'dockerHost'>): string[] {
   const host = session.dockerHost.trim();
   return host ? ['-H', host] : [];
+}
+
+/**
+ * Spawn environment with common Docker install locations added to PATH.
+ *
+ * GUI-launched apps (Finder/Dock on macOS, Start Menu on Windows) inherit a
+ * minimal PATH that excludes Docker Desktop's binaries, so a bare
+ * spawn('docker') fails with ENOENT even when Docker is installed. Prepending
+ * the standard locations makes the backend work regardless of launch context.
+ */
+function dockerSpawnEnv(): NodeJS.ProcessEnv {
+  const isWin = process.platform === 'win32';
+  const sep = isWin ? ';' : ':';
+  const home = os.homedir();
+  const extraPaths = isWin
+    ? [
+        'C:\\Program Files\\Docker\\Docker\\resources\\bin',
+        'C:\\ProgramData\\DockerDesktop\\version-bin',
+      ]
+    : [
+        '/usr/local/bin',
+        '/opt/homebrew/bin',
+        '/Applications/Docker.app/Contents/Resources/bin',
+        `${home}/.docker/bin`,
+        '/usr/bin',
+        '/bin',
+      ];
+
+  const current = process.env.PATH ?? '';
+  const parts = current ? current.split(sep) : [];
+  for (const p of extraPaths) {
+    if (p && !parts.includes(p)) parts.push(p);
+  }
+  return { ...process.env, PATH: parts.join(sep) };
 }
 
 export class DockerBackend implements IRemoteBackend {
@@ -292,7 +327,7 @@ export class DockerBackend implements IRemoteBackend {
       const fullArgs = [...dockerBaseArgs(session), ...args];
       let proc: ChildProcess;
       try {
-        proc = spawn('docker', fullArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
+        proc = spawn('docker', fullArgs, { stdio: ['ignore', 'pipe', 'pipe'], env: dockerSpawnEnv() });
       } catch (error) {
         resolve({ ok: false, stdout: '', error: String(error) });
         return;
