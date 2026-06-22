@@ -179,15 +179,18 @@ export class DockerBackend implements IRemoteBackend {
     // Final fallback: many StarMade containers run the server directly (no
     // screen/tmux), with the JVM reading from the container's stdin. Inject the
     // command into the server process's stdin via /proc/<pid>/fd/0. We locate
-    // the StarMade JVM (newest matching process), then fall back to PID 1.
+    // the JVM by process NAME ('java'), then fall back to PID 1.
     //
-    // The pattern uses a character class ([S]tarMade) so pgrep does not match
-    // this delivery script's own command line (which contains the literal
-    // string "StarMade"). We only write when fd 0 is a pipe — i.e. the
-    // container was started with stdin open (docker run -i). Writing to a
-    // /dev/null stdin (no -i) would silently succeed without reaching the server.
+    // Matching by name (pgrep -nx java) — not by command line — is important:
+    // this delivery script's own text contains the word "StarMade", so a
+    // command-line match would grab this helper shell instead of the server.
+    // The helper runs as 'sh', so a name match can never self-match.
+    //
+    // We only write when fd 0 is a pipe — i.e. the container has stdin open
+    // (stdin_open / docker run -i). Writing to a /dev/null or TTY stdin would
+    // not reach the server's console.
     const stdinFallback = [
-      `SMPID=$(pgrep -nf '[S]tarMade' 2>/dev/null || pgrep -nx java 2>/dev/null || echo 1)`,
+      `SMPID=$(pgrep -nx java 2>/dev/null || echo 1)`,
       `if [ -p /proc/$SMPID/fd/0 ]; then printf '%s\\n' "$CMD" > /proc/$SMPID/fd/0 2>/dev/null && exit 0; fi`,
       // A char-device stdin (e.g. /dev/pts/0) means the server is attached to a
       // TTY. Writing to a TTY slave is terminal output, not input, so the
