@@ -1,5 +1,6 @@
 {
   "name": "starmade-launcher",
+  "desktopName": "org.star-made.launcher-v4.desktop",
   "private": true,
   "version": "4.2.17",
   "description": "StarMade Launcher",
