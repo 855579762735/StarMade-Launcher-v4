@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=StarMade Launcher v4
+Comment=Launcher for StarMade, the space sandbox game.
+Exec=run.sh
+Icon=org.star-made.launcher-v4
+Terminal=false
+Categories=Gaming;
