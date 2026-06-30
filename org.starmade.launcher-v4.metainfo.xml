@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop">
+  <id>org.star-made.launcher-v4</id>
+  <name>StarMade Launcher v4</name>
+  <summary>Launcher for StarMade, the space sandbox game.</summary>
+  <description>
+    <p>A modern, immersive launcher for StarMade — the space sandbox game by Schine GmbH.</p>
+    <p>Built with React 19, TypeScript 5, Vite 6, and Electron 41.</p>
+  </description>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+  <developer_name>Schine</developer_name>
+  <launchable type="desktop-id">org.star-made.launcher-v4.desktop</launchable>
+  <url type="homepage">https://star-made.org/</url>
+  <url type="bugtracker">https://github.com/starmade-community/starmade-launcher-v4/issues</url>
+  <url type="vcs-browser">https://github.com/starmade-community/starmade-launcher-v4</url>
+  <screenshots>
+    <screenshot type="default">
+      <caption>star-made launcher main window</caption>
+      <image>https://camo.githubusercontent.com/e2cc2aa09c11fcdc1ecf4a8b85cfd85bea56c668a660a18c93f11acfc98b2211/68747470733a2f2f7777772e737461722d6d6164652e6f72672f696d616765732f6267312e6a7067</image>
+    </screenshot>
+  </screenshots>
+  <releases>
+    <release version="4.2.17" date="2026-06-30">
+      <description>
+        <p>Updated to upstream launcher version v4.2.17.</p>
+      </description>
+    </release>
+  </releases>
+  <content_rating type="oars-1.1"/>
+</component>
