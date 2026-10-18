@@ -224,13 +224,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
                 // Persist the resolved runtime unless the install already pointed at a
                 // valid Java (usedPreferred). This refreshes installs whose stored path
                 // went stale after a Java 8 → 21 game update, and keeps the default
-                // settings' javaPath8/21 in sync — without clobbering a user override.
+                // settings' javaPath<version> in sync — without clobbering a user override.
                 if (!ensure.usedPreferred && !installation.isRemote) {
                     updateInstallation({ ...installation, customJavaPath: ensure.path });
                     try {
                         const storeKey = 'defaultInstallationSettings';
                         const current = (await window.launcher.store?.get(storeKey)) as Record<string, unknown> | undefined;
-                        const fieldKey = requiredJava === 21 ? 'javaPath21' : 'javaPath8';
+                        const fieldKey = `javaPath${requiredJava}`;
                         await window.launcher.store?.set(storeKey, { ...(current ?? {}), [fieldKey]: ensure.path });
                     } catch (persistErr) {
                         console.warn('[AppContext] Failed to persist default Java path:', persistErr);

@@ -21,9 +21,9 @@ import { storeGet, storeSet, storeDelete, storeClearAll, getManagedInstallRoot }
 import { fetchAllVersions, invalidateVersionCache } from './versions.js';
 import { startDownload, cancelDownload } from './downloader.js';
 import type { DownloadProgress } from './downloader.js';
-import { downloadJava, detectSystemJava, resolveJavaPath, getDefaultJavaPaths, findJavaExecutableInDir, ensureJava } from './java.js';
+import { downloadJava, detectSystemJava, resolveJavaPath, getDefaultJavaPaths, findJavaExecutableInDir, ensureJava, isJavaVersion, JAVA_VERSIONS } from './java.js';
 import { launchGame, stopGame, getGameStatus, getAllRunningGames, getLogPath, openLogLocation, clearServerLogFiles, getGraphicsInfo, listServerLogFiles, readServerLogFile, sendServerStdin, listChatFiles, readChatFile, getPlayTimeTotals, hasRunningGames } from './launcher.js';
-import { isSteamGamingMode } from './steam.js';
+import { isSteamGamingMode, steamJoinArgs } from './steam.js';
 import type { UpdateInfo } from './updater.js';
 import { checkForUpdates, downloadUpdate, installUpdate, openReleasesPage, applyPendingUpdate } from './updater.js';
 import { createBackup, listBackups, restoreBackup } from './backup.js';
@@ -250,6 +250,9 @@ function loadRendererRoute(
  * On desktop / macOS this is always false, so nothing below changes.
  */
 const gamingMode = isSteamGamingMode();
+
+/** Steam friend-join request this launcher was started with; consumed by the next client launch. */
+let pendingSteamJoin = steamJoinArgs();
 
 function createWindow(): void {
   const { height: workAreaHeight } = screen.getPrimaryDisplay().workAreaSize;
@@ -741,19 +744,12 @@ ipcMain.handle(IPC.JAVA_LIST, async () => {
 
   // Adoptium/Temurin archives nest the JRE under a versioned subdirectory
   // (e.g. jre8/jdk8u362-b09-jre/bin/java), so we search recursively.
-  const jre8Dir = path.join(launcherDir, 'jre8');
-  if (fs.existsSync(jre8Dir)) {
-    const jre8Path = findJavaExecutableInDir(jre8Dir);
-    if (jre8Path) {
-      bundled.push({ version: '8', path: jre8Path, source: 'bundled' });
-    }
-  }
-
-  const jre21Dir = path.join(launcherDir, 'jre21');
-  if (fs.existsSync(jre21Dir)) {
-    const jre21Path = findJavaExecutableInDir(jre21Dir);
-    if (jre21Path) {
-      bundled.push({ version: '21', path: jre21Path, source: 'bundled' });
+  for (const version of JAVA_VERSIONS) {
+    const jreDir = path.join(launcherDir, `jre${version}`);
+    if (!fs.existsSync(jreDir)) continue;
+    const jrePath = findJavaExecutableInDir(jreDir);
+    if (jrePath) {
+      bundled.push({ version: String(version), path: jrePath, source: 'bundled' });
     }
   }
   
@@ -763,7 +759,8 @@ ipcMain.handle(IPC.JAVA_LIST, async () => {
   return { bundled, system: system.map(j => ({ ...j, source: 'system' })) };
 });
 
-ipcMain.handle(IPC.JAVA_DOWNLOAD, async (_event, version: 8 | 21) => {
+ipcMain.handle(IPC.JAVA_DOWNLOAD, async (_event, version: unknown) => {
+  if (!isJavaVersion(version)) return { success: false, error: `Unsupported Java version: ${version}` };
   try {
     const launcherDir = getLauncherDir();
     const javaPath = await downloadJava(version, launcherDir);
@@ -773,7 +770,8 @@ ipcMain.handle(IPC.JAVA_DOWNLOAD, async (_event, version: 8 | 21) => {
   }
 });
 
-ipcMain.handle(IPC.JAVA_ENSURE, async (_event, version: 8 | 21, preferredPath?: string) => {
+ipcMain.handle(IPC.JAVA_ENSURE, async (_event, version: unknown, preferredPath?: string) => {
+  if (!isJavaVersion(version)) return { success: false, error: `Unsupported Java version: ${version}` };
   try {
     const launcherDir = getLauncherDir();
     const result = await ensureJava(version, launcherDir, { preferredPath });
@@ -851,7 +849,10 @@ ipcMain.handle(IPC.GAME_LAUNCH, async (_event, options: {
   // so the game's working directory and file lookups never depend on cwd.
   const installationPath = resolveInstallPath(options.installationPath);
 
-  return launchGame({ ...options, installationPath, launcherDir, authToken: authToken ?? undefined });
+  const steamJoin = options.isServer ? undefined : pendingSteamJoin;
+  if (steamJoin?.length) pendingSteamJoin = [];
+
+  return launchGame({ ...options, installationPath, launcherDir, authToken: authToken ?? undefined, steamJoinArgs: steamJoin });
 });
 
 ipcMain.handle(IPC.GAME_STOP, (_event, installationId: string) => {

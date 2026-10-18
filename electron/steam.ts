@@ -27,3 +27,21 @@
 export function isSteamGamingMode(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.SteamTenfoot === '1' || env.SteamGamepadUI === '1';
 }
+
+/** Join tokens StarMade puts in its Steam rich-presence `connect` string. */
+const STEAM_JOIN_TOKENS = new Set(['+connect', '+steamrelay']);
+
+/**
+ * Extracts a Steam friend-join request ("Join Game" / an accepted invite) from
+ * the launcher's argv, e.g. `+connect 1.2.3.4:4242 +steamrelay 7656...`.
+ * The game resolves these itself (direct first, Steam relay fallback), so they
+ * are forwarded verbatim.  Re-split because Steam may pass them as one argument.
+ */
+export function steamJoinArgs(argv: string[] = process.argv): string[] {
+  const tokens = argv.join(' ').split(/\s+/);
+  const result: string[] = [];
+  for (let i = 0; i + 1 < tokens.length; i++) {
+    if (STEAM_JOIN_TOKENS.has(tokens[i].toLowerCase())) result.push(tokens[i], tokens[++i]);
+  }
+  return result;
+}

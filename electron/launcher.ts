@@ -321,6 +321,8 @@ export interface LaunchOptions {
   uplinkPort?: number;
   /** Enabled mod IDs. Passed as a comma-separated list after the `-uplink` port. */
   modIds?: string[];
+  /** Steam friend-join tokens (see steamJoinArgs). Ignored for servers and when `uplink` is set. */
+  steamJoinArgs?: string[];
 }
 
 export interface LaunchResult {
@@ -337,6 +339,7 @@ export interface LaunchCommandArgOptions {
   uplink?: string;
   uplinkPort?: number;
   modIds?: string[];
+  steamJoinArgs?: string[];
 }
 
 /** Build raw argv for the spawned Java process. */
@@ -349,6 +352,7 @@ export function buildLaunchArgs(options: LaunchCommandArgOptions): string[] {
     uplink,
     uplinkPort,
     modIds,
+    steamJoinArgs,
   } = options;
 
   const args = [
@@ -375,6 +379,8 @@ export function buildLaunchArgs(options: LaunchCommandArgOptions): string[] {
     if (modIds && modIds.length > 0) {
       args.push(modIds.join(','));
     }
+  } else if (!isServer && steamJoinArgs && steamJoinArgs.length > 0) {
+    args.push(...steamJoinArgs);
   }
 
   return args;
@@ -411,6 +417,7 @@ export async function launchGame(options: LaunchOptions): Promise<LaunchResult> 
     uplink,
     uplinkPort,
     modIds,
+    steamJoinArgs,
   } = options;
 
   // Check if already running
@@ -506,8 +513,8 @@ export async function launchGame(options: LaunchOptions): Promise<LaunchResult> 
     ];
 
     // macOS + GLFW/LWJGL3 requires -XstartOnFirstThread for client launches.
-    // Only applies to Java 21 versions (>= 0.3xx) that use LWJGL3.
-    if (process.platform === 'darwin' && !isServer && requiredJavaVersion === 21) {
+    // Only applies to the modern versions (>= 0.3xx) that use LWJGL3.
+    if (process.platform === 'darwin' && !isServer && requiredJavaVersion !== 8) {
       jvmArgList.unshift(...MACOS_CLIENT_ARGS);
     }
 
@@ -524,6 +531,7 @@ export async function launchGame(options: LaunchOptions): Promise<LaunchResult> 
       uplink,
       uplinkPort,
       modIds,
+      steamJoinArgs,
     });
 
     // Only client launches inject registry auth tokens.

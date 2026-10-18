@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { FolderIcon, MonitorIcon, ChevronDownIcon, CloseIcon, PencilIcon, WrenchIcon } from './icons';
-import type { ManagedItem, ItemType, Version } from '../../types';
+import type { ManagedItem, ItemType, JavaVersion, Version } from '../../types';
 import { getIconComponent } from '../../utils/getIconComponent';
 import CustomDropdown from './CustomDropdown';
 import MemorySlider from './MemorySlider';
@@ -157,62 +157,57 @@ const IconPickerModal: React.FC<IconPickerModalProps> = ({ onSelect, onClose }) 
     );
 };
 
+/** Java versions a build can require, in the order they appear in the UI. */
+const JAVA_VERSIONS: readonly JavaVersion[] = [8, 21, 25];
+
+/** Store field holding the default path for a given Java version. */
+type JavaPathDefaults = Partial<Record<`javaPath${JavaVersion}`, string>>;
+
 /**
- * Resolve the effective Java path for a given required version, merging the
+ * Resolve the default Java executable path for every supported version, merging the
  * item-type-specific defaults with installation defaults as a fallback for
  * java paths when creating a server (which may not yet have its own paths set).
  */
 async function resolveJavaPaths(
   itemTypeName: string,
-): Promise<{ javaPath8: string; javaPath21: string }> {
+): Promise<Record<JavaVersion, string>> {
+  const paths = { 8: '', 21: '', 25: '' } as Record<JavaVersion, string>;
   if (typeof window === 'undefined' || !window.launcher?.store) {
-    return { javaPath8: '', javaPath21: '' };
+    return paths;
   }
 
   const storeKey = itemTypeName === 'Server' ? 'defaultServerSettings' : 'defaultInstallationSettings';
 
   const stored = await window.launcher.store.get(storeKey).catch(() => null);
-  const defaults = (stored && typeof stored === 'object') ? stored as {
-    javaPath8?: string;
-    javaPath21?: string;
-  } : {};
+  const defaults: JavaPathDefaults = (stored && typeof stored === 'object') ? stored : {};
 
   // For servers, fall back to installation defaults when server-specific paths are empty
-  let installDefaults: { javaPath8?: string; javaPath21?: string } = {};
-  if (itemTypeName === 'Server' && !defaults.javaPath8 && !defaults.javaPath21) {
+  let installDefaults: JavaPathDefaults = {};
+  if (itemTypeName === 'Server' && !JAVA_VERSIONS.some(v => defaults[`javaPath${v}`])) {
     const instStored = await window.launcher.store.get('defaultInstallationSettings').catch(() => null);
     if (instStored && typeof instStored === 'object') {
-      installDefaults = instStored as { javaPath8?: string; javaPath21?: string };
+      installDefaults = instStored as JavaPathDefaults;
     }
   }
 
-  let javaPath8  = defaults.javaPath8  || installDefaults.javaPath8  || '';
-  let javaPath21 = defaults.javaPath21 || installDefaults.javaPath21 || '';
+  for (const v of JAVA_VERSIONS) {
+    paths[v] = defaults[`javaPath${v}`] || installDefaults[`javaPath${v}`] || '';
+  }
 
   // Fall back to detecting bundled JREs when store defaults are missing
-  if ((!javaPath8 || !javaPath21) && window.launcher.java) {
+  if (JAVA_VERSIONS.some(v => !paths[v]) && window.launcher.java) {
     try {
       const runtimes = await window.launcher.java.list();
-      if (!javaPath8) {
-        const bundled8 = runtimes.bundled.find(r => {
-          const v = parseInt(r.version, 10);
-          return v >= 8 && v < 9;
-        });
-        javaPath8 = bundled8?.path || '';
-      }
-      if (!javaPath21) {
-        const bundled21 = runtimes.bundled.find(r => {
-          const v = parseInt(r.version, 10);
-          return v >= 21 && v < 22;
-        });
-        javaPath21 = bundled21?.path || '';
+      for (const v of JAVA_VERSIONS) {
+        if (paths[v]) continue;
+        paths[v] = runtimes.bundled.find(r => parseInt(r.version, 10) === v)?.path || '';
       }
     } catch {
       // Ignore detection errors
     }
   }
 
-  return { javaPath8, javaPath21 };
+  return paths;
 }
 
 const InstallationForm: React.FC<InstallationFormProps> = ({ item, isNew, onSave, onCancel, onRepairInstall, itemTypeName }) => {
@@ -232,7 +227,7 @@ const InstallationForm: React.FC<InstallationFormProps> = ({ item, isNew, onSave
   const [type, setType] = useState<ItemType>(item.type === 'latest' ? 'release' : item.type);
   const [version, setVersion] = useState(item.version);
   const [buildPath, setBuildPath] = useState(item.buildPath ?? '');
-  const [requiredJavaVersion, setRequiredJavaVersion] = useState<8 | 21 | undefined>(item.requiredJavaVersion);
+  const [requiredJavaVersion, setRequiredJavaVersion] = useState<JavaVersion | undefined>(item.requiredJavaVersion);
   const [gameDir, setGameDir] = useState(item.path);
   const [javaMemory, setJavaMemory] = useState(item.maxMemory ?? 8192);
   const [javaPath, setJavaPath] = useState(item.customJavaPath ?? '');
@@ -266,9 +261,7 @@ const InstallationForm: React.FC<InstallationFormProps> = ({ item, isNew, onSave
         maxPlayers?: number;
         javaMemory?: number;
         jvmArgs?: string;
-        javaPath8?: string;
-        javaPath21?: string;
-      } : {};
+      } & JavaPathDefaults : {};
 
       if (defaults.gameDir) {
         setGameDir(defaults.gameDir);
@@ -286,11 +279,9 @@ const InstallationForm: React.FC<InstallationFormProps> = ({ item, isNew, onSave
       if (defaults.jvmArgs) setJvmArgs(defaults.jvmArgs);
 
       // Resolve Java paths (with installation-defaults fallback for servers)
-      const { javaPath8, javaPath21 } = await resolveJavaPaths(itemTypeName);
-      if (requiredJavaVersion === 21) {
-        setJavaPath(javaPath21);
-      } else if (requiredJavaVersion === 8) {
-        setJavaPath(javaPath8);
+      if (requiredJavaVersion) {
+        const paths = await resolveJavaPaths(itemTypeName);
+        setJavaPath(paths[requiredJavaVersion]);
       }
 
       setDefaultsLoaded(true);
@@ -311,14 +302,11 @@ const InstallationForm: React.FC<InstallationFormProps> = ({ item, isNew, onSave
       setRequiredJavaVersion(first.requiredJavaVersion);
 
       // Auto-switch Java path to match the new branch's version requirement
-      if (first.requiredJavaVersion) {
-        resolveJavaPaths(itemTypeName).then(({ javaPath8, javaPath21 }) => {
-          if (first.requiredJavaVersion === 21) {
-            setJavaPath(javaPath21);
-          } else if (first.requiredJavaVersion === 8) {
-            setJavaPath(javaPath8);
-          }
-        }).catch(() => {});
+      const required = first.requiredJavaVersion;
+      if (required) {
+        resolveJavaPaths(itemTypeName)
+          .then(paths => setJavaPath(paths[required]))
+          .catch(() => {});
       }
     }
   };
@@ -331,14 +319,11 @@ const InstallationForm: React.FC<InstallationFormProps> = ({ item, isNew, onSave
     setRequiredJavaVersion(entry?.requiredJavaVersion);
 
     // Auto-switch Java path to match the new version's requirement
-    if (entry?.requiredJavaVersion) {
-      resolveJavaPaths(itemTypeName).then(({ javaPath8, javaPath21 }) => {
-        if (entry.requiredJavaVersion === 21) {
-          setJavaPath(javaPath21);
-        } else if (entry.requiredJavaVersion === 8) {
-          setJavaPath(javaPath8);
-        }
-      }).catch(() => {});
+    const required = entry?.requiredJavaVersion;
+    if (required) {
+      resolveJavaPaths(itemTypeName)
+        .then(paths => setJavaPath(paths[required]))
+        .catch(() => {});
     }
   };
 
@@ -357,15 +342,13 @@ const InstallationForm: React.FC<InstallationFormProps> = ({ item, isNew, onSave
       return;
     }
 
-    resolveJavaPaths(itemTypeName).then(({ javaPath8, javaPath21 }) => {
-      if (requiredJavaVersion === 21) {
-        setJavaPath(javaPath21);
-      } else if (requiredJavaVersion === 8) {
-        setJavaPath(javaPath8);
-      }
-    }).catch((error) => {
-      console.error('Failed to update Java path:', error);
-    });
+    if (!requiredJavaVersion) return;
+
+    resolveJavaPaths(itemTypeName)
+      .then(paths => setJavaPath(paths[requiredJavaVersion]))
+      .catch((error) => {
+        console.error('Failed to update Java path:', error);
+      });
   }, [requiredJavaVersion, isNew, itemTypeName, defaultsLoaded]);
 
   useEffect(() => {
@@ -630,7 +613,6 @@ const InstallationForm: React.FC<InstallationFormProps> = ({ item, isNew, onSave
               <div className="col-span-2 -mt-2">
                 <p className="text-xs text-gray-400">
                   <span className="font-semibold">Requires Java {requiredJavaVersion}</span>
-                  {requiredJavaVersion === 21}
                 </p>
               </div>
             )}

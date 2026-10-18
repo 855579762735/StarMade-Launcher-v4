@@ -30,7 +30,9 @@ import {
   versionProbePath,
   ensureJava,
   JAVA_21_ARGS,
+  JAVA_25_ARGS,
   JAVA_8_ARGS,
+  isJavaVersion,
 } from '@/electron/java.ts';
 
 describe('getRequiredJavaVersion', () => {
@@ -77,18 +79,6 @@ describe('getRequiredJavaVersion', () => {
       expect(getRequiredJavaVersion('0.399.0')).toBe(21);
     });
 
-    it('returns 21 for version 1.0.0 (major >= 1)', () => {
-      expect(getRequiredJavaVersion('1.0.0')).toBe(21);
-    });
-
-    it('returns 21 for version 1.5.3', () => {
-      expect(getRequiredJavaVersion('1.5.3')).toBe(21);
-    });
-
-    it('returns 21 for version 2.0.0', () => {
-      expect(getRequiredJavaVersion('2.0.0')).toBe(21);
-    });
-
     it('returns 21 for version 0.400.307 (last legacy-scheme pre build)', () => {
       expect(getRequiredJavaVersion('0.400.307')).toBe(21);
     });
@@ -103,12 +93,40 @@ describe('getRequiredJavaVersion', () => {
       expect(getRequiredJavaVersion('0.4.1')).toBe(21);
     });
 
-    it('returns 21 for a future two-digit minor (0.10.0)', () => {
-      expect(getRequiredJavaVersion('0.10.0')).toBe(21);
+    it('returns 21 for version 0.4.5 (last Java 21 build)', () => {
+      expect(getRequiredJavaVersion('0.4.5')).toBe(21);
     });
 
-    it('returns 21 for a two-component 0.5', () => {
+    it('returns 21 for a two-component 0.5 (read as the legacy decimal 0.5)', () => {
       expect(getRequiredJavaVersion('0.5')).toBe(21);
+    });
+  });
+
+  describe('versions >= 0.4.6 → Java 25', () => {
+    it('returns 25 for version 0.4.6 (first version requiring Java 25)', () => {
+      expect(getRequiredJavaVersion('0.4.6')).toBe(25);
+    });
+
+    it('returns 25 for version 0.4.12 (patch beyond 6)', () => {
+      expect(getRequiredJavaVersion('0.4.12')).toBe(25);
+    });
+
+    it('returns 25 for a pre-release patch suffix (0.4.6-rc1)', () => {
+      expect(getRequiredJavaVersion('0.4.6-rc1')).toBe(25);
+    });
+
+    it('returns 25 for version 0.5.0 (minor beyond 4)', () => {
+      expect(getRequiredJavaVersion('0.5.0')).toBe(25);
+    });
+
+    it('returns 25 for a future two-digit minor (0.10.0)', () => {
+      expect(getRequiredJavaVersion('0.10.0')).toBe(25);
+    });
+
+    it('returns 25 for major >= 1 (1.0.0, 1.5.3, 2.0.0)', () => {
+      expect(getRequiredJavaVersion('1.0.0')).toBe(25);
+      expect(getRequiredJavaVersion('1.5.3')).toBe(25);
+      expect(getRequiredJavaVersion('2.0.0')).toBe(25);
     });
   });
 
@@ -142,6 +160,24 @@ describe('getJvmArgsForJava', () => {
   it('returns JAVA_8_ARGS (empty array) for Java 8', () => {
     expect(getJvmArgsForJava(8)).toEqual(JAVA_8_ARGS);
     expect(getJvmArgsForJava(8)).toHaveLength(0);
+  });
+
+  it('returns JAVA_25_ARGS for Java 25 — the Java 21 opens plus ZGC', () => {
+    expect(getJvmArgsForJava(25)).toEqual(JAVA_25_ARGS);
+    expect(getJvmArgsForJava(25)).toEqual(expect.arrayContaining(JAVA_21_ARGS));
+    expect(getJvmArgsForJava(25)).toContain('-XX:+UseZGC');
+  });
+});
+
+describe('isJavaVersion', () => {
+  it('accepts the supported versions', () => {
+    expect([8, 21, 25].every(isJavaVersion)).toBe(true);
+  });
+
+  it('rejects anything else (IPC arguments reach a path and a URL)', () => {
+    for (const bad of [17, '21', 0, null, undefined, '../evil', {}]) {
+      expect(isJavaVersion(bad)).toBe(false);
+    }
   });
 });
 

@@ -2,6 +2,7 @@
  * Java runtime detection and management.
  *
  * StarMade version requirements:
+ *   - Versions >= 0.4.6   require Java 25  (--add-opens + ZGC)
  *   - Versions >= 0.3     require Java 21  (with --add-opens arg)
  *   - Versions <  0.3     require Java 8   (no extra args)
  *
@@ -18,6 +19,21 @@
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
+/** Java major versions the launcher knows how to resolve, download and launch. */
+export type JavaVersion = 8 | 21 | 25;
+
+/** All supported Java versions, oldest first. */
+export const JAVA_VERSIONS: readonly JavaVersion[] = [8, 21, 25];
+
+/**
+ * Narrow an untrusted value (e.g. an IPC argument) to a supported Java version.
+ * The version is interpolated into a filesystem path and a download URL, so
+ * callers crossing a process boundary must validate rather than cast.
+ */
+export function isJavaVersion(value: unknown): value is JavaVersion {
+	return JAVA_VERSIONS.includes(value as JavaVersion);
+}
+
 /** JVM arguments required for Java 21 when launching StarMade >= 0.3.x */
 export const JAVA_21_ARGS = [
 	'-javaagent:StarMade.jar',
@@ -27,6 +43,24 @@ export const JAVA_21_ARGS = [
 	'--add-opens=java.base/java.lang=ALL-UNNAMED',
 	'--add-opens=java.base/java.util=ALL-UNNAMED',
 	'--add-opens=java.base/java.io=ALL-UNNAMED',
+];
+
+/**
+ * JVM arguments for Java 25 (StarMade >= 0.4.6).
+ *
+ * Same module access as Java 21 plus:
+ *   -XX:+UseZGC                   generational ZGC (default in 25) — sub-millisecond
+ *                                 pauses, which matters for a voxel game that allocates
+ *                                 heavily while streaming sectors.
+ *   -XX:+UseCompactObjectHeaders   JEP 519, a product (no longer experimental) option in
+ *                                 25: 8-byte headers instead of 12, so noticeably less
+ *                                 heap and better cache behaviour for the many small
+ *                                 objects StarMade creates.
+ */
+export const JAVA_25_ARGS = [
+	...JAVA_21_ARGS,
+	'-XX:+UseZGC',
+	'-XX:+UseCompactObjectHeaders',
 ];
 
 /**
@@ -44,9 +78,9 @@ export const JAVA_8_ARGS: string[] = [];
 
 /**
  * Determine which Java major version is required for a given StarMade version.
- * @returns 21 for versions >= 0.3.x, otherwise 8.
+ * @returns 25 for versions >= 0.4.6, 21 for versions >= 0.3.x, otherwise 8.
  */
-export function getRequiredJavaVersion(starMadeVersion: string): 8 | 21 {
+export function getRequiredJavaVersion(starMadeVersion: string): JavaVersion {
 	// Two schemes appear in the build indexes:
 	//   legacy — the version is a decimal fraction: "0.17", "0.19624",
 	//            "0.203.175", "0.302.101", "0.400.307" (patch appended as a
@@ -63,16 +97,21 @@ export function getRequiredJavaVersion(starMadeVersion: string): 8 | 21 {
 	const minorStr = parts[1].trim();
 	if (!/^\d+$/.test(minorStr)) return 8;
 
-	// StarMade 1.x and above require Java 21
-	if (major >= 1) return 21;
+	// StarMade 1.x and above are well past the 0.4.6 cut-over.
+	if (major >= 1) return 25;
 
 	// A 3-component version with a 1- or 2-digit minor can only be the current
 	// scheme — the legacy scheme always padded its minor to three digits before
 	// it grew a patch component. That scheme began at 0.4, long after the Java
-	// 21 cut-over, so every such build needs Java 21. (Without this, "0.4.1"
-	// reads as the decimal 0.4 < ... and, worse, a future "0.10.0" would read as
-	// 0.10 and fall back to Java 8.)
-	if (parts.length >= 3 && minorStr.length <= 2) return 21;
+	// 21 cut-over, so every such build needs at least Java 21; 0.4.6 moved to
+	// Java 25. (Without this, "0.4.1" reads as the decimal 0.4 < ... and, worse,
+	// a future "0.10.0" would read as 0.10 and fall back to Java 8.)
+	if (parts.length >= 3 && minorStr.length <= 2) {
+		const minor = parseInt(minorStr, 10);
+		// A patch like "6-beta" still counts as 6; an unparseable one as 0.
+		const patch = parseInt(parts[2], 10) || 0;
+		return (minor > 4 || (minor === 4 && patch >= 6)) ? 25 : 21;
+	}
 
 	// Legacy scheme: compare as the decimal fraction it is, so
 	// 0.19624 < 0.203 < 0.3 <= 0.302 < 0.400. Everything from 0.3 on needs Java 21.
@@ -82,8 +121,12 @@ export function getRequiredJavaVersion(starMadeVersion: string): 8 | 21 {
 /**
  * Get the required JVM arguments for a given Java version.
  */
-export function getJvmArgsForJava(javaVersion: 8 | 21): string[] {
-	return javaVersion === 21 ? JAVA_21_ARGS : JAVA_8_ARGS;
+export function getJvmArgsForJava(javaVersion: JavaVersion): string[] {
+	switch (javaVersion) {
+		case 25: return JAVA_25_ARGS;
+		case 21: return JAVA_21_ARGS;
+		default: return JAVA_8_ARGS;
+	}
 }
 
 // ─── Java download & detection (Phase 4) ─────────────────────────────────────
@@ -109,7 +152,7 @@ const execFileAsync = promisify(execFile);
  * defends against a tampered or truncated download from the release host it
  * redirects to (GitHub), and against corrupted transfers.
  */
-export async function getAdoptiumAsset(version: 8 | 21): Promise<{ link: string; checksum: string }> {
+export async function getAdoptiumAsset(version: JavaVersion): Promise<{ link: string; checksum: string }> {
 	const platform = process.platform === 'win32' ? 'windows'
 		: process.platform === 'darwin' ? 'mac'
 			: 'linux';
@@ -329,7 +372,7 @@ async function extractTarGz(archivePath: string, targetDir: string): Promise<voi
  * Download the specified Java runtime (Adoptium/Temurin) to the launcher's jre8/ or jre21/ directory.
  */
 export async function downloadJava(
-	version: 8 | 21,
+	version: JavaVersion,
 	launcherDir: string,
 	onProgress?: (percent: number) => void
 ): Promise<string> {
@@ -664,7 +707,7 @@ export async function detectSystemJava(): Promise<Array<{ version: string; path:
  *   2. System-installed Java matching the required version
  *   3. Returns null if not found (caller should trigger download)
  */
-export async function resolveJavaPath(requiredVersion: 8 | 21, launcherDir: string): Promise<string | null> {
+export async function resolveJavaPath(requiredVersion: JavaVersion, launcherDir: string): Promise<string | null> {
 	// 1. Check bundled JRE.
 	// Adoptium/Temurin archives extract into a versioned subdirectory inside
 	// jreDir (e.g. jre8/jdk8u362-b09-jre/bin/java), so we must search
@@ -714,7 +757,7 @@ export async function resolveJavaPath(requiredVersion: 8 | 21, launcherDir: stri
  * itself never disagree (which is what caused redundant downloads).
  */
 export async function ensureJava(
-	version: 8 | 21,
+	version: JavaVersion,
 	launcherDir: string,
 	opts: { preferredPath?: string } = {},
 	// Dependencies are injectable for testing; production callers use the defaults.
@@ -749,19 +792,13 @@ export async function ensureJava(
 }
 
 /**
- * Get the default Java executable paths for jre8 and jre21 from the launcher directory.
- * These paths may not exist yet if the JREs haven't been downloaded.
- * @returns Object with jre8Path and jre21Path strings.
+ * Get the default Java executable paths for jre8, jre21 and jre25 from the launcher
+ * directory. These paths may not exist yet if the JREs haven't been downloaded.
  */
-export function getDefaultJavaPaths(launcherDir: string): { jre8Path: string; jre21Path: string } {
-	const jre8Path = process.platform === 'win32'
-		? path.join(launcherDir, 'jre8', 'bin', 'javaw.exe')
-		: path.join(launcherDir, 'jre8', 'bin', 'java');
+export function getDefaultJavaPaths(launcherDir: string): { jre8Path: string; jre21Path: string; jre25Path: string } {
+	const exe = process.platform === 'win32' ? 'javaw.exe' : 'java';
+	const pathFor = (version: JavaVersion) => path.join(launcherDir, `jre${version}`, 'bin', exe);
 
-	const jre21Path = process.platform === 'win32'
-		? path.join(launcherDir, 'jre21', 'bin', 'javaw.exe')
-		: path.join(launcherDir, 'jre21', 'bin', 'java');
-
-	return { jre8Path, jre21Path };
+	return { jre8Path: pathFor(8), jre21Path: pathFor(21), jre25Path: pathFor(25) };
 }
 

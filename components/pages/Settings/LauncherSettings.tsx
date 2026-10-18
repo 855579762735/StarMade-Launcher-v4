@@ -3,7 +3,7 @@ import CustomDropdown from '../../common/CustomDropdown';
 import { FolderIcon } from '../../common/icons';
 import useLegacyInstallImporter from '../../hooks/useLegacyInstallImporter';
 import { useApp } from '../../../contexts/AppContext';
-import type { LauncherCloseBehavior, LauncherSettingsData } from '@/types';
+import type { JavaVersion, LauncherCloseBehavior, LauncherSettingsData } from '@/types';
 import UpdateAvailableModal from '../../common/UpdateAvailableModal';
 import {
     LEGACY_IMPORT_PROMPT_STORE_KEY,
@@ -202,7 +202,7 @@ const LauncherSettings: React.FC = () => {
         }
     };
 
-    const handleDownloadJava = async (version: 8 | 21) => {
+    const handleDownloadJava = async (version: JavaVersion) => {
         if (typeof window === 'undefined' || !window.launcher?.java) {
             return;
         }
@@ -216,7 +216,7 @@ const LauncherSettings: React.FC = () => {
                 // Keep the default settings' Java path for this version in sync so new
                 // installs (and the Settings UI) point at the freshly installed runtime.
                 if (result.path && window.launcher?.store) {
-                    const fieldKey = version === 21 ? 'javaPath21' : 'javaPath8';
+                    const fieldKey = `javaPath${version}`;
                     for (const key of ['defaultInstallationSettings', 'defaultServerSettings']) {
                         try {
                             const current = (await window.launcher.store.get(key)) as Record<string, unknown> | undefined;
@@ -588,7 +588,7 @@ const LauncherSettings: React.FC = () => {
                     <div className="space-y-2 mb-4">
                         {javaRuntimes.bundled.length === 0 && javaRuntimes.system.length === 0 && (
                             <div className="text-gray-400 text-sm italic p-3 bg-black/20 rounded-md">
-                                No Java runtimes detected. Download Java 8 or Java 21 below.
+                                No Java runtimes detected. Download Java 8, 21 or 25 below.
                             </div>
                         )}
                         
@@ -638,10 +638,19 @@ const LauncherSettings: React.FC = () => {
                         >
                             {javaDownloadProgress[21] || 'Download Java 21'}
                         </button>
+
+                        <button
+                            onClick={() => handleDownloadJava(25)}
+                            disabled={!!javaDownloadProgress[25]}
+                            className="px-4 py-2 bg-starmade-accent hover:bg-starmade-accent/80 disabled:bg-starmade-accent/50 rounded-md text-sm font-semibold uppercase tracking-wider transition-colors"
+                        >
+                            {javaDownloadProgress[25] || 'Download Java 25'}
+                        </button>
                     </div>
 
                     <p className="text-xs text-gray-400 mt-3">
                         StarMade versions &lt; 0.3.x require Java 8. Versions ≥ 0.3.x require Java 21.
+                        Versions ≥ 0.4.6 require Java 25.
                     </p>
                 </div>
 
