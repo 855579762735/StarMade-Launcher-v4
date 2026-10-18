@@ -127,8 +127,8 @@ const launcherApi = {
       system: Array<{ version: string; path: string; source: string }>;
     }> => ipcRenderer.invoke(IPC.JAVA_LIST),
 
-    /** Download and install a Java runtime (8 or 21). */
-    download: (version: 8 | 21): Promise<{ success: boolean; path?: string; error?: string }> =>
+    /** Download and install a Java runtime (8, 21 or 25). */
+    download: (version: 8 | 21 | 25): Promise<{ success: boolean; path?: string; error?: string }> =>
       ipcRenderer.invoke(IPC.JAVA_DOWNLOAD, version),
 
     /**
@@ -137,7 +137,7 @@ const launcherApi = {
      * valid user override is kept (reported via `usedPreferred`).
      */
     ensure: (
-      version: 8 | 21,
+      version: 8 | 21 | 25,
       preferredPath?: string,
     ): Promise<{ success: boolean; path?: string; downloaded?: boolean; usedPreferred?: boolean; error?: string }> =>
       ipcRenderer.invoke(IPC.JAVA_ENSURE, version, preferredPath),
@@ -146,8 +146,8 @@ const launcherApi = {
     detect: (): Promise<Array<{ version: string; path: string; source: string }>> =>
       ipcRenderer.invoke(IPC.JAVA_DETECT),
 
-    /** Get default Java paths for jre8 and jre21. */
-    getDefaultPaths: (): Promise<{ jre8Path: string; jre21Path: string }> =>
+    /** Get default Java paths for jre8, jre21 and jre25. */
+    getDefaultPaths: (): Promise<{ jre8Path: string; jre21Path: string; jre25Path: string }> =>
       ipcRenderer.invoke(IPC.JAVA_GET_DEFAULT_PATHS), /** Find the java executable inside a given folder (JRE/JDK root). */
     findExecutable: (folderPath: string): Promise<string> =>
       ipcRenderer.invoke(IPC.JAVA_FIND_EXECUTABLE, folderPath),

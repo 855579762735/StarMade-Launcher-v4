@@ -16,6 +16,7 @@ import {
   parseStarMadeLogLine,
   redactLaunchArgs,
 } from '../../electron/launcher.js';
+import { steamJoinArgs } from '../../electron/steam.js';
 import { LAUNCH_ARG_FIXTURES } from './fixtures/launcherArgs.fixtures';
 
 describe('parseStarMadeLogLine', () => {
@@ -142,3 +143,20 @@ describe('launch argument fixtures', () => {
   });
 });
 
+
+describe('steam friend join', () => {
+  const base = { jvmArgList: [] as string[] };
+
+  it('extracts join tokens from split or combined argv', () => {
+    expect(steamJoinArgs(['launcher.exe', '+connect', '1.2.3.4:4242', '+steamrelay', '765'])).toEqual(['+connect', '1.2.3.4:4242', '+steamrelay', '765']);
+    expect(steamJoinArgs(['launcher.exe', '+steamrelay 765'])).toEqual(['+steamrelay', '765']);
+    expect(steamJoinArgs(['launcher.exe', '--no-sandbox'])).toEqual([]);
+  });
+
+  it('forwards tokens to client launches only, and never alongside -uplink', () => {
+    const join = ['+steamrelay', '765'];
+    expect(buildLaunchArgs({ ...base, steamJoinArgs: join })).toEqual(['-jar', 'StarMade.jar', '-force', ...join]);
+    expect(buildLaunchArgs({ ...base, isServer: true, steamJoinArgs: join })).not.toContain('+steamrelay');
+    expect(buildLaunchArgs({ ...base, uplink: 'localhost', steamJoinArgs: join })).not.toContain('+steamrelay');
+  });
+});
