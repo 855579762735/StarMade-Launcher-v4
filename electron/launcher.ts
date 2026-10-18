@@ -551,6 +551,9 @@ export async function launchGame(options: LaunchOptions): Promise<LaunchResult> 
     // Spawn the process detached so it lives outside the Electron process
     // tree.  This lets Steam (and other launchers) see the Electron app as
     // exited once its windows close, even while StarMade keeps running.
+    // Spawning Java is the launcher's whole job; `javaPath` and `args` are built
+    // from the managed install, never from a string the user or a server supplies.
+    // nosemgrep: javascript.lang.security.detect-child-process.detect-child-process
     const child = spawn(javaPath, args, {
       cwd: installationPath,
       stdio: [isServer ? 'pipe' : 'ignore', 'pipe', 'pipe'],
@@ -957,17 +960,18 @@ export function readServerLogFile(
     throw new Error('Invalid log file path.');
   }
 
-  const stat = fs.statSync(filePath);
-  if (!stat.isFile()) {
-    throw new Error('Log path is not a file.');
-  }
-
-  const size = stat.size;
-  const bytesToRead = Math.max(1, Math.min(Math.floor(maxBytes), size));
-  const start = Math.max(0, size - bytesToRead);
-
+  // Stat through the open descriptor, not the path: statting first and opening
+  // afterwards lets the path be swapped in between (TOCTOU).
   const fd = fs.openSync(filePath, 'r');
   try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile()) {
+      throw new Error('Log path is not a file.');
+    }
+
+    const size = stat.size;
+    const bytesToRead = Math.max(1, Math.min(Math.floor(maxBytes), size));
+    const start = Math.max(0, size - bytesToRead);
     const buffer = Buffer.alloc(size === 0 ? 0 : bytesToRead);
     if (buffer.length > 0) {
       fs.readSync(fd, buffer, 0, buffer.length, start);
@@ -1105,15 +1109,15 @@ export function readChatFile(
     throw new Error('Invalid chat file path.');
   }
 
-  const stat = fs.statSync(filePath);
-  if (!stat.isFile()) throw new Error('Chat path is not a file.');
-
-  const size = stat.size;
-  const bytesToRead = Math.max(1, Math.min(Math.floor(maxBytes), size));
-  const start = Math.max(0, size - bytesToRead);
-
+  // Stat through the open descriptor — see the log tail reader above.
   const fd = fs.openSync(filePath, 'r');
   try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile()) throw new Error('Chat path is not a file.');
+
+    const size = stat.size;
+    const bytesToRead = Math.max(1, Math.min(Math.floor(maxBytes), size));
+    const start = Math.max(0, size - bytesToRead);
     const buffer = Buffer.alloc(size === 0 ? 0 : bytesToRead);
     if (buffer.length > 0) {
       fs.readSync(fd, buffer, 0, buffer.length, start);

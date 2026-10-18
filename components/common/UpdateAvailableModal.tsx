@@ -55,6 +55,8 @@ function extractWhatsChanged(notes: string): string {
 
   // Find the next same-or-higher-level heading that isn't this one
   const headingLevel = (match[0].match(/^#+/) ?? ['#'])[0].length;
+  // Reviewed: `headingLevel` is a number, not user text.
+  // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp
   const nextHeadingRegex = new RegExp(`^#{1,${headingLevel}}\\s`, 'm');
   const nextMatch = afterHeading.slice(match[0].length).search(nextHeadingRegex);
 

@@ -19,16 +19,33 @@ jobs:
       actions: read
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - run: pip install semgrep
 
       # p/default is the curated low-noise set. Add more packs to widen coverage,
       # e.g. --config p/security-audit --config p/react (noisier).
       # Semgrep honours .gitignore, so node_modules/ and dist/ are skipped.
-      - run: semgrep scan --config p/default --sarif --output semgrep.sarif
+      #
+      # Two audit-grade rules are excluded: they fire syntactically on patterns
+      # used throughout this codebase and together accounted for 196 of 253 open
+      # alerts, burying the real findings.
+      #   path-join-resolve-traversal (~186 hits) - every path.join()/resolve()
+      #     with a non-literal second argument. Traversal is contained by the
+      #     reviewed helpers resolveInstallationTargetPath(), assertWithin() and
+      #     safeExtractPath(); CodeQL's dataflow js/path-injection query, which
+      #     tracks taint rather than syntax, reports nothing here.
+      #   unsafe-formatstring (~10 hits, severity 'note') - console.* calls whose
+      #     template contains a %-like sequence. JS console has no printf
+      #     semantics that an attacker can abuse through these call sites.
+      # Reviewed hits of any other rule carry an inline `nosemgrep:` comment
+      # instead, so those rules keep running on new code.
+      - run: >-
+          semgrep scan --config p/default --sarif --output semgrep.sarif
+          --exclude-rule javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
+          --exclude-rule javascript.lang.security.audit.unsafe-formatstring.unsafe-formatstring
 
-      - uses: github/codeql-action/upload-sarif@v3
+      - uses: github/codeql-action/upload-sarif@ce5e7eeac396d720fe2d802714996c8ce561e311 # v3
         if: always()
         with:
           sarif_file: semgrep.sarif

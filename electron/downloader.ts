@@ -136,6 +136,10 @@ async function needsDownload(filePath: string, expectedChecksum: string): Promis
 
 const delay = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
+// Collapse line breaks before logging remote-controlled strings (URLs, server
+// error text) so they cannot forge extra log lines.
+const oneLine = (value: string) => value.replace(/[\r\n]+/g, ' ');
+
 function downloadFile(
   session:          DownloadSession,
   url:              string,
@@ -299,7 +303,7 @@ async function downloadWithRetry(
       if (session.cancelled || msg === 'Cancelled' || attempt >= MAX_ATTEMPTS || /^HTTP 4/.test(msg)) {
         throw err;
       }
-      console.warn(`[downloader] attempt ${attempt}/${MAX_ATTEMPTS} failed for ${url}: ${msg}`);
+      console.warn(`[downloader] attempt ${attempt}/${MAX_ATTEMPTS} failed for ${oneLine(url)}: ${oneLine(msg)}`);
       await delay(500 * 2 ** (attempt - 1));
     }
   }
@@ -453,7 +457,7 @@ export async function startDownload(
       // otherwise arrive after onError and overwrite the error state, leaving
       // the UI stuck on a frozen progress bar with no reason shown.
       cancelDownload(installationId);
-      console.error(`[downloader] ${installationId} failed:`, msg);
+      console.error(`[downloader] ${oneLine(installationId)} failed:`, oneLine(msg));
       onError(msg);
     }
   } finally {

@@ -36,6 +36,7 @@ import {
   getAccessTokenForLaunch,
 } from './auth.js';
 import { isRunningOnWayland } from './wayland-detect.js';
+import { fitWindowBounds } from './window-bounds.js';
 import { isRunningAsAppImage } from './appimage-detect.js';
 import { registerAppImageDesktopIntegration } from './desktop-integration.js';
 import { parseVersionTxt } from './legacy.js';
@@ -255,10 +256,12 @@ const gamingMode = isSteamGamingMode();
 let pendingSteamJoin = steamJoinArgs();
 
 function createWindow(): void {
-  const { height: workAreaHeight } = screen.getPrimaryDisplay().workAreaSize;
-  const useShortScreenSizing = workAreaHeight < 720;
-  const initialHeight = useShortScreenSizing ? workAreaHeight : 1024;
-  const minHeight = useShortScreenSizing ? Math.min(600, workAreaHeight) : 600;
+  // Clamp to the work area so the window stays fully reachable at any OS UI
+  // scale (see electron/window-bounds.ts).
+  const bounds = fitWindowBounds(
+    { width: 1460, height: 1024, minWidth: 1024, minHeight: 600 },
+    screen.getPrimaryDisplay().workArea,
+  );
 
   // Resolve the icon path: in packaged builds the icon is copied to
   // resources/icon.png via extraResources so it lives outside the asar and
@@ -267,10 +270,7 @@ function createWindow(): void {
   const iconPath = getWindowIconPath();
 
   mainWindow = new BrowserWindow({
-    width: 1460,
-    height: initialHeight,
-    minWidth: 1024,
-    minHeight,
+    ...bounds,
     resizable: true,
     thickFrame: true,
     frame: false,
@@ -340,13 +340,25 @@ function createServerPanelWindow(serverId?: string, serverName?: string): Browse
     : null;
 
   const iconPath = getWindowIconPath();
-  const serverPanelWindow = new BrowserWindow({
+  // Remembered bounds were saved at whatever UI scale was active then, so they
+  // can land off-screen (or oversized) after a scale change — clamp them to the
+  // work area of the display they sit closest to.
+  const desiredBounds = {
     width: storedBounds?.width ?? 1440,
     height: storedBounds?.height ?? 980,
     x: storedBounds?.x,
     y: storedBounds?.y,
     minWidth: 1100,
     minHeight: 720,
+  };
+  const bounds = fitWindowBounds(
+    desiredBounds,
+    storedBounds
+      ? screen.getDisplayMatching(storedBounds).workArea
+      : screen.getPrimaryDisplay().workArea,
+  );
+  const serverPanelWindow = new BrowserWindow({
+    ...bounds,
     resizable: true,
     thickFrame: true,
     frame: false,
@@ -533,6 +545,8 @@ ipcMain.handle(IPC.REMOTE_FILES_SERVER_CFG_SET, async (_event, serverId: string,
 
   const lines = readResult.content.split(/\r?\n/);
   const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // Reviewed: `key` is regex-escaped above.
+  // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp
   const lineRegex = new RegExp(`^(\\s*${escapedKey}\\s*=\\s*)(.*?)(\\s*(?:\\/\\/.*)?)$`);
   let updated = false;
   const nextLines = lines.map((line) => {
@@ -963,6 +977,8 @@ function readServerCfgKey(installationPath: string, key: string): string | null 
   const content = fs.readFileSync(cfgPath, 'utf8');
   const lines = content.split(/\r?\n/);
   const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // Reviewed: `key` is regex-escaped above.
+  // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp
   const lineRegex = new RegExp(`^\\s*${escapedKey}\\s*=\\s*(.*?)\\s*(?:\\/\\/.*)?$`);
 
   for (const line of lines) {
@@ -1011,6 +1027,8 @@ function writeServerCfgKey(installationPath: string, key: string, value: string)
   const content = fs.readFileSync(cfgPath, 'utf8');
   const lines = content.split(/\r?\n/);
   const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // Reviewed: `key` is regex-escaped above.
+  // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp
   const lineRegex = new RegExp(`^(\\s*${escapedKey}\\s*=\\s*)(.*?)(\\s*(?:\\/\\/.*)?)$`);
 
   let updated = false;
@@ -1098,9 +1116,8 @@ function isLikelyBinaryContent(content: Buffer): boolean {
   return (suspiciousByteCount / sampleSize) > 0.3;
 }
 
-function isEditableTextFile(targetPath: string): boolean {
+function isEditableTextContent(targetPath: string, content: Buffer): boolean {
   if (isKnownBinaryFileByExtension(targetPath)) return false;
-  const content = fs.readFileSync(targetPath);
   return !isLikelyBinaryContent(content);
 }
 
@@ -1146,31 +1163,44 @@ function listInstallationEntries(
 
 function readInstallationTextFile(installationPath: string, relativePath: string): string {
   const targetPath = resolveInstallationTargetPath(installationPath, relativePath);
-  const stats = fs.statSync(targetPath);
-  if (!stats.isFile()) {
-    throw new Error('Target path is not a file.');
-  }
+  // Everything goes through one descriptor: statting, sniffing and reading the
+  // path separately lets it be swapped in between (TOCTOU), and read it twice.
+  const fd = fs.openSync(targetPath, 'r');
+  try {
+    if (!fs.fstatSync(fd).isFile()) {
+      throw new Error('Target path is not a file.');
+    }
 
-  if (!isEditableTextFile(targetPath)) {
-    throw new Error(getNonEditableFileReason(relativePath));
-  }
+    const content = fs.readFileSync(fd);
+    if (!isEditableTextContent(targetPath, content)) {
+      throw new Error(getNonEditableFileReason(relativePath));
+    }
 
-  return fs.readFileSync(targetPath, 'utf8');
+    return content.toString('utf8');
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
 function writeInstallationTextFile(installationPath: string, relativePath: string, content: string): { success: boolean; error?: string } {
   const targetPath = resolveInstallationTargetPath(installationPath, relativePath);
-  const stats = fs.statSync(targetPath);
-  if (!stats.isFile()) {
-    return { success: false, error: 'Target path is not a file.' };
-  }
+  // One descriptor for the checks and the write — see readInstallationTextFile.
+  const fd = fs.openSync(targetPath, 'r+');
+  try {
+    if (!fs.fstatSync(fd).isFile()) {
+      return { success: false, error: 'Target path is not a file.' };
+    }
 
-  if (!isEditableTextFile(targetPath)) {
-    return { success: false, error: getNonEditableFileReason(relativePath) };
-  }
+    if (!isEditableTextContent(targetPath, fs.readFileSync(fd))) {
+      return { success: false, error: getNonEditableFileReason(relativePath) };
+    }
 
-  fs.writeFileSync(targetPath, content, 'utf8');
-  return { success: true };
+    fs.ftruncateSync(fd, 0);
+    fs.writeSync(fd, content, 0, 'utf8');
+    return { success: true };
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
 function normalizeRelativePath(installationPath: string, absolutePath: string): string {
