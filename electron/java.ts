@@ -2,7 +2,7 @@
  * Java runtime detection and management.
  *
  * StarMade version requirements:
- *   - Versions >= 0.4.6   require Java 25  (--add-opens + ZGC)
+ *   - Versions >= 0.4.6   require Java 25  (--add-opens + compact object headers)
  *   - Versions >= 0.3     require Java 21  (with --add-opens arg)
  *   - Versions <  0.3     require Java 8   (no extra args)
  *
@@ -49,17 +49,16 @@ export const JAVA_21_ARGS = [
  * JVM arguments for Java 25 (StarMade >= 0.4.6).
  *
  * Same module access as Java 21 plus:
- *   -XX:+UseZGC                   generational ZGC (default in 25) — sub-millisecond
- *                                 pauses, which matters for a voxel game that allocates
- *                                 heavily while streaming sectors.
  *   -XX:+UseCompactObjectHeaders   JEP 519, a product (no longer experimental) option in
  *                                 25: 8-byte headers instead of 12, so noticeably less
  *                                 heap and better cache behaviour for the many small
  *                                 objects StarMade creates.
+ *
+ * No GC flag: G1 (the default) suits client heaps. ZGC only pays off on large
+ * dedicated server heaps, where operators can add -XX:+UseZGC via custom JVM args.
  */
 export const JAVA_25_ARGS = [
 	...JAVA_21_ARGS,
-	'-XX:+UseZGC',
 	'-XX:+UseCompactObjectHeaders',
 ];
 

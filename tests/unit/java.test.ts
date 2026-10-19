@@ -162,10 +162,11 @@ describe('getJvmArgsForJava', () => {
     expect(getJvmArgsForJava(8)).toHaveLength(0);
   });
 
-  it('returns JAVA_25_ARGS for Java 25 — the Java 21 opens plus ZGC', () => {
+  it('returns JAVA_25_ARGS for Java 25 — the Java 21 opens plus compact object headers', () => {
     expect(getJvmArgsForJava(25)).toEqual(JAVA_25_ARGS);
     expect(getJvmArgsForJava(25)).toEqual(expect.arrayContaining(JAVA_21_ARGS));
-    expect(getJvmArgsForJava(25)).toContain('-XX:+UseZGC');
+    expect(getJvmArgsForJava(25)).toContain('-XX:+UseCompactObjectHeaders');
+    expect(getJvmArgsForJava(25)).not.toContain('-XX:+UseZGC');
   });
 });
 
