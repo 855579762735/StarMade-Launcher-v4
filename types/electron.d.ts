@@ -61,6 +61,11 @@ declare global {
         getServerPanelSchema: () => Promise<unknown>;
         /** Whether the launcher was started by Steam in Big Picture / Gaming Mode. */
         isSteamGamingMode: () => Promise<boolean>;
+        /** Pending Steam friend join (`version` is the host's game version), or null. */
+        getPendingSteamJoin: () => Promise<{ version?: string } | null>;
+        clearPendingSteamJoin: () => Promise<void>;
+        /** Fires when an already-open launcher receives a new Steam friend join. Returns an unsubscribe. */
+        onSteamJoinRequested: (cb: () => void) => () => void;
       };
 
       /** Third-party licenses APIs */

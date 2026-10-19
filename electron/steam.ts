@@ -38,10 +38,24 @@ const STEAM_JOIN_TOKENS = new Set(['+connect', '+steamrelay']);
  * are forwarded verbatim.  Re-split because Steam may pass them as one argument.
  */
 export function steamJoinArgs(argv: string[] = process.argv): string[] {
-  const tokens = argv.join(' ').split(/\s+/);
+  const tokens = splitTokens(argv);
   const result: string[] = [];
   for (let i = 0; i + 1 < tokens.length; i++) {
     if (STEAM_JOIN_TOKENS.has(tokens[i].toLowerCase())) result.push(tokens[i], tokens[++i]);
   }
   return result;
+}
+
+/**
+ * The host's game version from a join request (`+version 0.302.101`), used to
+ * pick or download the matching installation.  Not forwarded to the game.
+ */
+export function steamJoinVersion(argv: string[] = process.argv): string | undefined {
+  const tokens = splitTokens(argv);
+  const i = tokens.findIndex(t => t.toLowerCase() === '+version');
+  return i >= 0 && i + 1 < tokens.length ? tokens[i + 1] : undefined;
+}
+
+function splitTokens(argv: string[]): string[] {
+  return argv.join(' ').split(/\s+/);
 }

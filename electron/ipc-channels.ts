@@ -185,6 +185,12 @@ export const IPC = {
    * Returns: boolean
    */
   APP_IS_STEAM_GAMING_MODE: 'app:is-steam-gaming-mode',
+  /** Pending Steam friend join: `{ version? }`, or null when there is none. */
+  STEAM_GET_PENDING_JOIN: 'steam:get-pending-join',
+  /** Drops the pending Steam friend join (the player declined it). */
+  STEAM_CLEAR_PENDING_JOIN: 'steam:clear-pending-join',
+  /** Main → renderer: a second launcher instance passed a new Steam friend join. */
+  STEAM_JOIN_REQUESTED: 'steam:join-requested',
 
   // ─── Licenses ───────────────────────────────────────────────────────────────
 

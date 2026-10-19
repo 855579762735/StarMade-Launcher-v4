@@ -29,6 +29,17 @@ const launcherApi = {
     /** Whether the launcher was started by Steam in Big Picture / Gaming Mode. */
     isSteamGamingMode: (): Promise<boolean> =>
       ipcRenderer.invoke(IPC.APP_IS_STEAM_GAMING_MODE),
+    /** Pending Steam friend join (`version` is the host's game version), or null. */
+    getPendingSteamJoin: (): Promise<{ version?: string } | null> =>
+      ipcRenderer.invoke(IPC.STEAM_GET_PENDING_JOIN),
+    clearPendingSteamJoin: (): Promise<void> =>
+      ipcRenderer.invoke(IPC.STEAM_CLEAR_PENDING_JOIN),
+    /** Fires when an already-open launcher receives a new Steam friend join. */
+    onSteamJoinRequested: (cb: () => void) => {
+      const listener = () => cb();
+      ipcRenderer.on(IPC.STEAM_JOIN_REQUESTED, listener);
+      return () => ipcRenderer.removeListener(IPC.STEAM_JOIN_REQUESTED, listener);
+    },
   },
 
   licenses: {

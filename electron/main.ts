@@ -23,7 +23,7 @@ import { startDownload, cancelDownload } from './downloader.js';
 import type { DownloadProgress } from './downloader.js';
 import { downloadJava, detectSystemJava, resolveJavaPath, getDefaultJavaPaths, findJavaExecutableInDir, ensureJava, isJavaVersion, JAVA_VERSIONS } from './java.js';
 import { launchGame, stopGame, getGameStatus, getAllRunningGames, getLogPath, openLogLocation, clearServerLogFiles, getGraphicsInfo, listServerLogFiles, readServerLogFile, sendServerStdin, listChatFiles, readChatFile, getPlayTimeTotals, hasRunningGames } from './launcher.js';
-import { isSteamGamingMode, steamJoinArgs } from './steam.js';
+import { isSteamGamingMode, steamJoinArgs, steamJoinVersion } from './steam.js';
 import type { UpdateInfo } from './updater.js';
 import { checkForUpdates, downloadUpdate, installUpdate, openReleasesPage, applyPendingUpdate } from './updater.js';
 import { createBackup, listBackups, restoreBackup } from './backup.js';
@@ -252,8 +252,11 @@ function loadRendererRoute(
  */
 const gamingMode = isSteamGamingMode();
 
-/** Steam friend-join request this launcher was started with; consumed by the next client launch. */
-let pendingSteamJoin = steamJoinArgs();
+/**
+ * Steam friend-join request (from this launch or a second instance's argv); consumed by the next
+ * client launch of the host's version.  The renderer picks or downloads that version.
+ */
+let pendingSteamJoin: { args: string[]; version?: string } = { args: steamJoinArgs(), version: steamJoinVersion() };
 
 function createWindow(): void {
   // Clamp to the work area so the window stays fully reachable at any OS UI
@@ -863,8 +866,10 @@ ipcMain.handle(IPC.GAME_LAUNCH, async (_event, options: {
   // so the game's working directory and file lookups never depend on cwd.
   const installationPath = resolveInstallPath(options.installationPath);
 
-  const steamJoin = options.isServer ? undefined : pendingSteamJoin;
-  if (steamJoin?.length) pendingSteamJoin = [];
+  // A different version would just fail the server's login version check.
+  const { args: joinArgs, version: joinVersion } = pendingSteamJoin;
+  const steamJoin = !options.isServer && joinArgs.length && (!joinVersion || joinVersion === options.starMadeVersion) ? joinArgs : undefined;
+  if (steamJoin) pendingSteamJoin = { args: [] };
 
   return launchGame({ ...options, installationPath, launcherDir, authToken: authToken ?? undefined, steamJoinArgs: steamJoin });
 });
@@ -1713,6 +1718,8 @@ ipcMain.handle(IPC.APP_RESOLVE_MANAGED_PATH, (_event, targetPath: string) => res
 ipcMain.handle(IPC.APP_GET_SYSTEM_MEMORY, () => Math.floor(os.totalmem() / (1024 * 1024)));
 ipcMain.handle(IPC.APP_GET_SERVER_PANEL_SCHEMA, () => readServerPanelSchema());
 ipcMain.handle(IPC.APP_IS_STEAM_GAMING_MODE, () => gamingMode);
+ipcMain.handle(IPC.STEAM_GET_PENDING_JOIN, () => pendingSteamJoin.args.length ? { version: pendingSteamJoin.version } : null);
+ipcMain.handle(IPC.STEAM_CLEAR_PENDING_JOIN, () => { pendingSteamJoin = { args: [] }; });
 
 const LICENSES_DIR_NAMES = ['licenses'];
 
@@ -3027,7 +3034,26 @@ if (applyPendingUpdate()) {
 
 // ─── App lifecycle ───────────────────────────────────────────────────────────
 
+// Steam starts a new launcher for "Join Game" even when one is open; hand its join to this one.
+const isPrimaryInstance = app.requestSingleInstanceLock();
+if (!isPrimaryInstance) {
+  app.quit();
+} else {
+  app.on('second-instance', (_event, argv) => {
+    const args = steamJoinArgs(argv);
+    if (args.length) {
+      pendingSteamJoin = { args, version: steamJoinVersion(argv) };
+      mainWindow?.webContents.send(IPC.STEAM_JOIN_REQUESTED);
+    }
+    if (!mainWindow) return createWindow();
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  });
+}
+
 app.whenReady().then(() => {
+  if (!isPrimaryInstance) return;
   copyPresetsToUserData();
   buildMenu();
   createWindow();

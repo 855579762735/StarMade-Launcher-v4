@@ -17,6 +17,7 @@ import UpdateAvailableModal from './components/common/UpdateAvailableModal';
 import LegacyImportPromptModal from './components/common/LegacyImportPromptModal';
 import LastPlayedWidget from './components/common/LastPlayedWidget';
 import GameUpdateNotice from './components/common/GameUpdateNotice';
+import SteamJoinPrompt from './components/common/SteamJoinPrompt';
 import { useApp } from './contexts/AppContext';
 import { useData } from './contexts/DataContext';
 import useLegacyInstallImporter from './components/hooks/useLegacyInstallImporter';
@@ -368,6 +369,8 @@ const App: React.FC = () => {
       <LaunchErrorNotice />
 
       <GameUpdateNotice />
+
+      <SteamJoinPrompt />
 
       {logViewerInstallation && (
         <GameLogViewer

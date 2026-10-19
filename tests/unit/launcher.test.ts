@@ -21,7 +21,7 @@ import {
   readChatFile,
   redactLaunchArgs,
 } from '../../electron/launcher.js';
-import { steamJoinArgs } from '../../electron/steam.js';
+import { steamJoinArgs, steamJoinVersion } from '../../electron/steam.js';
 import { LAUNCH_ARG_FIXTURES } from './fixtures/launcherArgs.fixtures';
 
 describe('parseStarMadeLogLine', () => {
@@ -156,6 +156,14 @@ describe('steam friend join', () => {
     expect(steamJoinArgs(['launcher.exe', '+connect', '1.2.3.4:4242', '+steamrelay', '765'])).toEqual(['+connect', '1.2.3.4:4242', '+steamrelay', '765']);
     expect(steamJoinArgs(['launcher.exe', '+steamrelay 765'])).toEqual(['+steamrelay', '765']);
     expect(steamJoinArgs(['launcher.exe', '--no-sandbox'])).toEqual([]);
+  });
+
+  it('reads the host version without forwarding it to the game', () => {
+    const argv = ['launcher.exe', '+connect 1.2.3.4:4242 +version 0.302.101'];
+    expect(steamJoinVersion(argv)).toBe('0.302.101');
+    expect(steamJoinArgs(argv)).toEqual(['+connect', '1.2.3.4:4242']);
+    expect(steamJoinVersion(['launcher.exe', '+steamrelay', '765'])).toBeUndefined();
+    expect(steamJoinVersion(['launcher.exe', '+version'])).toBeUndefined();
   });
 
   it('forwards tokens to client launches only, and never alongside -uplink', () => {
