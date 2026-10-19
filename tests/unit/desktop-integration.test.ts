@@ -4,6 +4,13 @@ import os   from 'os';
 import fs   from 'fs';
 import { buildDesktopEntry, registerAppImageDesktopIntegration } from '../../electron/desktop-integration.js';
 
+// The real update-desktop-database / gtk-update-icon-cache exist on CI runners
+// and write cache files into the temp XDG dir asynchronously, racing afterEach's
+// rmSync (ENOTEMPTY). They are fire-and-forget extras, so stub them out.
+vi.mock('child_process', () => ({
+  spawn: vi.fn(() => ({ on: vi.fn(), unref: vi.fn() })),
+}));
+
 // ─── buildDesktopEntry ────────────────────────────────────────────────────────
 
 describe('buildDesktopEntry', () => {
