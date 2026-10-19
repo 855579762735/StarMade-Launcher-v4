@@ -50,9 +50,15 @@ jobs:
           path: release/StarMade-Launcher.exe
           retention-days: 7
 
-  # ─── Build for macOS (Apple Silicon) ──────────────────────────────────────
-  build-macos-arm:
-    name: Build macOS (Apple Silicon)
+  # ─── Build for macOS (both architectures) ────────────────────────────────
+  #
+  # One job builds arm64 AND x64: the arch arrays in package.json's
+  # build.mac.target already cover both, and electron-builder's --arm64/--x64
+  # CLI flags do not override them. A second job only duplicated the work and
+  # competed for the scarce macos-latest (arm64) runner pool — it was the one
+  # that kept getting dropped with "not acquired by Runner of type hosted".
+  build-macos:
+    name: Build macOS
     needs: test
     runs-on: macos-latest
     steps:
@@ -69,51 +75,21 @@ jobs:
         run: npm ci
 
       - name: Build Electron app
-        run: npm run build && node build-electron.mjs && npx electron-builder --mac --arm64
+        run: npm run build && node build-electron.mjs && npx electron-builder --mac
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SMD_API_KEY: ${{ secrets.SMD_API_KEY }}
 
-      - name: Upload macOS ARM artifacts
+      - name: Upload macOS artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: macos-arm-builds
+          name: macos-builds
           path: |
             release/StarMade-Launcher-macOS-arm64.dmg
             release/StarMade-Launcher-macOS-arm64.zip
-          retention-days: 7
-
-  # ─── Build for macOS (Intel) ─────────────────────────────────────────────
-  build-macos-x64:
-    name: Build macOS (Intel)
-    needs: test
-    runs-on: macos-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build Electron app
-        run: npm run build && node build-electron.mjs && npx electron-builder --mac --x64
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SMD_API_KEY: ${{ secrets.SMD_API_KEY }}
-
-      - name: Upload macOS Intel artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: macos-x64-builds
-          path: |
             release/StarMade-Launcher-macOS-x64.dmg
             release/StarMade-Launcher-macOS-x64.zip
+          if-no-files-found: error
           retention-days: 7
 
   # ─── Build for Linux ──────────────────────────────────────────────────────
@@ -164,7 +140,7 @@ jobs:
   # ─── Create Draft Release ─────────────────────────────────────────────────
   create-release:
     name: Create Draft Release
-    needs: [build-windows, build-macos-arm, build-macos-x64, build-linux]
+    needs: [build-windows, build-macos, build-linux]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -176,16 +152,10 @@ jobs:
           name: windows-builds
           path: artifacts/windows
 
-      - name: Download macOS ARM artifacts
+      - name: Download macOS artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: macos-arm-builds
-          path: artifacts/macos
-
-      - name: Download macOS Intel artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: macos-x64-builds
+          name: macos-builds
           path: artifacts/macos
 
       - name: Download Linux artifacts
