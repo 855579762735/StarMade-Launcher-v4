@@ -149,12 +149,13 @@ const UpdateAvailableModal: React.FC<UpdateAvailableModalProps> = ({
 
     if (!isOpen || !updateInfo) return null;
 
-    // Auto-installable assets: the platform-independent app.asar (macOS/Linux)
-    // and the Windows portable .exe (swapped via a detached helper). A .dmg /
-    // .AppImage fallback is NOT silently installable — those open in browser.
+    // Auto-installable assets: the platform-independent app.asar (macOS/Linux),
+    // the Windows portable .exe (swapped via a detached helper) and the Linux
+    // .AppImage (replaced on disk). A .dmg fallback is NOT silently
+    // installable — that opens in browser.
     const canSilentInstall =
         Boolean(updateInfo.assetUrl) &&
-        (updateInfo.assetName === 'app.asar' || /\.exe$/i.test(updateInfo.assetName ?? ''));
+        (updateInfo.assetName === 'app.asar' || /\.(exe|AppImage)$/i.test(updateInfo.assetName ?? ''));
 
     const formatBytes = (b: number) => {
         if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;
