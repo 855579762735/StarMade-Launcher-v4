@@ -309,24 +309,39 @@ export function safeLinkTarget(
 	linkName: string,
 	isHardLink: boolean,
 ): string | null {
-	// Reject clearly unsafe link targets from untrusted archives.
 	if (!linkName || path.isAbsolute(linkName)) return null;
-	const parts = linkName.split(/[\\/]+/);
-	if (parts.includes('..')) return null;
-
 	const root = path.resolve(targetDir);
 	const base = isHardLink ? root : path.dirname(entryPath);
 	const resolved = path.resolve(base, linkName);
 	return resolved === root || resolved.startsWith(root + path.sep) ? resolved : null;
 }
 
+/**
+ * True if `p` — or, when it doesn't exist yet, its nearest existing ancestor —
+ * really lives inside `targetDir` once symlinks are followed.  The lexical
+ * checks above can't see through symlinks already on disk (e.g. a link to
+ * `a/../b` where `a` is itself a symlink), so every write is re-checked here.
+ */
+export function isRealPathInside(targetDir: string, p: string): boolean {
+	const root = fs.realpathSync(targetDir);
+	let existing = path.resolve(p);
+	while (!fs.existsSync(existing)) {
+		const parent = path.dirname(existing);
+		if (parent === existing) return false;
+		existing = parent;
+	}
+	const real = fs.realpathSync(existing);
+	return real === root || real.startsWith(root + path.sep);
+}
+
 async function extractTarGz(archivePath: string, targetDir: string): Promise<void> {
 	return new Promise((resolve, reject) => {
 		const extract = tar.extract();
 		const gunzip = createGunzip();
+		fs.mkdirSync(targetDir, { recursive: true });
 		extract.on('entry', (header, stream, next) => {
 			const filePath = safeExtractPath(targetDir, header.name);
-			if (!filePath) {
+			if (!filePath || !isRealPathInside(targetDir, path.dirname(filePath))) {
 				reject(new Error(`[Java] Refusing to extract entry outside target directory: ${header.name}`));
 				return;
 			}
@@ -343,7 +358,8 @@ async function extractTarGz(archivePath: string, targetDir: string): Promise<voi
 				// later entry write through it.
 				const isHardLink = header.type === 'link';
 				const linkTarget = safeLinkTarget(targetDir, filePath, header.linkname!, isHardLink);
-				if (!linkTarget) {
+				// A hard link to a file reached through an escaping symlink would expose that file.
+				if (!linkTarget || (isHardLink && !isRealPathInside(targetDir, linkTarget))) {
 					reject(new Error(`[Java] Refusing to create link outside target directory: ${header.name} -> ${header.linkname}`));
 					return;
 				}
@@ -366,6 +382,10 @@ async function extractTarGz(archivePath: string, targetDir: string): Promise<voi
 				// Regular file — wait for the WriteStream to *finish* before chmod/next
 				// so the file is guaranteed to exist on disk.
 				fs.mkdirSync(path.dirname(filePath), { recursive: true });
+				// Replace (rather than write through) any link already at this path.
+				try {
+					if (fs.lstatSync(filePath).isSymbolicLink()) fs.unlinkSync(filePath);
+				} catch { /* doesn't exist yet */ }
 				const writeStream = fs.createWriteStream(filePath);
 				stream.pipe(writeStream);
 

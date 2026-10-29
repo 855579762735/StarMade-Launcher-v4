@@ -21,6 +21,7 @@ vi.mock('tar-stream', () => ({
 import {
   safeExtractPath,
   safeLinkTarget,
+  isRealPathInside,
   isAllowedDownloadUrl,
   getAdoptiumAsset,
   getRequiredJavaVersion,
@@ -442,6 +443,25 @@ describe('safeLinkTarget', () => {
     expect(safeLinkTarget(target, entry, 'jdk-25.0.5+8-jre/bin/java', true))
       .toBe(path.join(target, 'jdk-25.0.5+8-jre', 'bin', 'java'));
     expect(safeLinkTarget(target, entry, '../evil', true)).toBeNull();
+  });
+});
+
+describe('isRealPathInside', () => {
+  it('follows existing symlinks when checking containment', () => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), 'jre-realpath-'));
+    const root = path.join(base, 'root');
+    const outside = path.join(base, 'outside');
+    fs.mkdirSync(path.join(root, 'legal', 'java.base'), { recursive: true });
+    fs.mkdirSync(outside);
+    fs.symlinkSync(outside, path.join(root, 'escape'));
+    try {
+      expect(isRealPathInside(root, path.join(root, 'legal', 'java.base'))).toBe(true);
+      expect(isRealPathInside(root, path.join(root, 'legal', 'not-yet', 'deeper'))).toBe(true);
+      expect(isRealPathInside(root, path.join(root, 'escape'))).toBe(false);
+      expect(isRealPathInside(root, path.join(root, 'escape', 'new-dir'))).toBe(false);
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
   });
 });
 
