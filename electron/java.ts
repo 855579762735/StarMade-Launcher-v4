@@ -297,6 +297,24 @@ export function safeExtractPath(targetDir: string, entryName: string): string | 
 	return resolved === root || resolved.startsWith(root + path.sep) ? resolved : null;
 }
 
+/**
+ * Resolve a link entry's target, rejecting targets that escape `targetDir`.
+ * Hard links resolve from the archive root, symlinks from the entry's own
+ * directory — but both only need to stay inside `targetDir`, so a JDK's
+ * `legal/<module>/X -> ../java.base/X` is fine. Returns null if not contained.
+ */
+export function safeLinkTarget(
+	targetDir: string,
+	entryPath: string,
+	linkName: string,
+	isHardLink: boolean,
+): string | null {
+	const root = path.resolve(targetDir);
+	const base = isHardLink ? root : path.dirname(entryPath);
+	const resolved = path.resolve(base, linkName);
+	return resolved === root || resolved.startsWith(root + path.sep) ? resolved : null;
+}
+
 async function extractTarGz(archivePath: string, targetDir: string): Promise<void> {
 	return new Promise((resolve, reject) => {
 		const extract = tar.extract();
@@ -317,20 +335,23 @@ async function extractTarGz(archivePath: string, targetDir: string): Promise<voi
 			} else if (header.type === 'symlink' || header.type === 'link') {
 				// JDK archives contain many symlinks; create them instead of writing data.
 				// Link targets are attacker-controlled too: a symlink escaping targetDir lets a
-				// later entry write through it. Hard links resolve from the archive root,
-				// symlinks from the entry's own directory.
-				const linkBase = header.type === 'link' ? targetDir : path.dirname(filePath);
-				if (!safeExtractPath(linkBase, header.linkname!)) {
+				// later entry write through it.
+				const isHardLink = header.type === 'link';
+				const linkTarget = safeLinkTarget(targetDir, filePath, header.linkname!, isHardLink);
+				if (!linkTarget) {
 					reject(new Error(`[Java] Refusing to create link outside target directory: ${header.name} -> ${header.linkname}`));
 					return;
 				}
 				fs.mkdirSync(path.dirname(filePath), { recursive: true });
 				try {
 					if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-					fs.symlinkSync(header.linkname!, filePath);
+					// A hard link's name is relative to the archive root, so it can't be
+					// reused as a (directory-relative) symlink target.
+					if (isHardLink) fs.linkSync(linkTarget, filePath);
+					else fs.symlinkSync(header.linkname!, filePath);
 				} catch (err) {
-					// Non-fatal: symlink target may not exist yet in the archive order.
-					console.warn(`[Java] Warning: failed to create symlink ${filePath} -> ${header.linkname}:`, err);
+					// Non-fatal: link target may not exist yet in the archive order.
+					console.warn(`[Java] Warning: failed to create link ${filePath} -> ${header.linkname}:`, err);
 				}
 				stream.resume();
 				stream.on('end', next);

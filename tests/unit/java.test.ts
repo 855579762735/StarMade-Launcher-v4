@@ -20,6 +20,7 @@ vi.mock('tar-stream', () => ({
 
 import {
   safeExtractPath,
+  safeLinkTarget,
   isAllowedDownloadUrl,
   getAdoptiumAsset,
   getRequiredJavaVersion,
@@ -420,6 +421,27 @@ describe('safeExtractPath', () => {
 
   it('rejects sibling dirs that share the target prefix', () => {
     expect(safeExtractPath(target, '../jre21-evil/x')).toBeNull();
+  });
+});
+
+describe('safeLinkTarget', () => {
+  const target = path.join(os.tmpdir(), 'jre25');
+  const entry = path.join(target, 'jdk-25.0.5+8-jre', 'legal', 'jdk.nio.mapmode', 'ASSEMBLY_EXCEPTION');
+
+  it('allows symlinks that climb out of their own dir but stay inside the target', () => {
+    expect(safeLinkTarget(target, entry, '../java.base/ASSEMBLY_EXCEPTION', false))
+      .toBe(path.join(target, 'jdk-25.0.5+8-jre', 'legal', 'java.base', 'ASSEMBLY_EXCEPTION'));
+  });
+
+  it('rejects symlinks that escape the target', () => {
+    expect(safeLinkTarget(target, entry, '../../../../evil', false)).toBeNull();
+    expect(safeLinkTarget(target, entry, path.join(path.parse(target).root, 'etc', 'passwd'), false)).toBeNull();
+  });
+
+  it('resolves hard links from the archive root', () => {
+    expect(safeLinkTarget(target, entry, 'jdk-25.0.5+8-jre/bin/java', true))
+      .toBe(path.join(target, 'jdk-25.0.5+8-jre', 'bin', 'java'));
+    expect(safeLinkTarget(target, entry, '../evil', true)).toBeNull();
   });
 });
 
