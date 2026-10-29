@@ -309,6 +309,11 @@ export function safeLinkTarget(
 	linkName: string,
 	isHardLink: boolean,
 ): string | null {
+	// Reject clearly unsafe link targets from untrusted archives.
+	if (!linkName || path.isAbsolute(linkName)) return null;
+	const parts = linkName.split(/[\\/]+/);
+	if (parts.includes('..')) return null;
+
 	const root = path.resolve(targetDir);
 	const base = isHardLink ? root : path.dirname(entryPath);
 	const resolved = path.resolve(base, linkName);
