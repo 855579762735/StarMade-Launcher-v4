@@ -247,6 +247,32 @@ describe('checkForUpdates', () => {
       });
     });
 
+    it('picks the .AppImage asset when running as an AppImage (asar swap can\'t persist)', async () => {
+      const fs = await import('fs');
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'starmade-appimage-test-'));
+      const appImage = path.join(dir, 'StarMade-Launcher.AppImage');
+      fs.writeFileSync(appImage, '');
+      const originalAppImage = process.env.APPIMAGE;
+      process.env.APPIMAGE = appImage;
+      try {
+        await withPlatform('linux', async () => {
+          global.fetch = vi.fn().mockResolvedValueOnce({
+            ok: true,
+            json: async () => makeReleaseWithAssets('v4.1.0'),
+          } as Response);
+
+          const { checkForUpdates } = await import('../../electron/updater.js');
+          const result = await checkForUpdates();
+
+          expect(result.assetName).toBe('StarMade-Launcher.AppImage');
+        });
+      } finally {
+        if (originalAppImage === undefined) delete process.env.APPIMAGE;
+        else process.env.APPIMAGE = originalAppImage;
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
     it('falls back to the platform installer on macOS/Linux when app.asar is absent', async () => {
       await withPlatform('darwin', async () => {
         const release = makeReleaseWithAssets('v4.1.0');

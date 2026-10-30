@@ -29,6 +29,17 @@ const launcherApi = {
     /** Whether the launcher was started by Steam in Big Picture / Gaming Mode. */
     isSteamGamingMode: (): Promise<boolean> =>
       ipcRenderer.invoke(IPC.APP_IS_STEAM_GAMING_MODE),
+    /** Pending Steam friend join (`version` is the host's game version), or null. */
+    getPendingSteamJoin: (): Promise<{ version?: string } | null> =>
+      ipcRenderer.invoke(IPC.STEAM_GET_PENDING_JOIN),
+    clearPendingSteamJoin: (): Promise<void> =>
+      ipcRenderer.invoke(IPC.STEAM_CLEAR_PENDING_JOIN),
+    /** Fires when an already-open launcher receives a new Steam friend join. */
+    onSteamJoinRequested: (cb: () => void) => {
+      const listener = () => cb();
+      ipcRenderer.on(IPC.STEAM_JOIN_REQUESTED, listener);
+      return () => ipcRenderer.removeListener(IPC.STEAM_JOIN_REQUESTED, listener);
+    },
   },
 
   licenses: {
@@ -76,6 +87,12 @@ const launcherApi = {
       ipcRenderer.invoke(IPC.VERSIONS_FETCH, { invalidate }),
   },
 
+  news: {
+    /** Fetch the Steam news feed as raw RSS XML (main process — no CORS). */
+    fetch: (): Promise<{ success: boolean; xml?: string; error?: string }> =>
+      ipcRenderer.invoke(IPC.NEWS_FETCH),
+  },
+
   // ─── Phase 3: Download ────────────────────────────────────────────────────
 
   download: {
@@ -121,8 +138,8 @@ const launcherApi = {
       system: Array<{ version: string; path: string; source: string }>;
     }> => ipcRenderer.invoke(IPC.JAVA_LIST),
 
-    /** Download and install a Java runtime (8 or 21). */
-    download: (version: 8 | 21): Promise<{ success: boolean; path?: string; error?: string }> =>
+    /** Download and install a Java runtime (8, 21 or 25). */
+    download: (version: 8 | 21 | 25): Promise<{ success: boolean; path?: string; error?: string }> =>
       ipcRenderer.invoke(IPC.JAVA_DOWNLOAD, version),
 
     /**
@@ -131,7 +148,7 @@ const launcherApi = {
      * valid user override is kept (reported via `usedPreferred`).
      */
     ensure: (
-      version: 8 | 21,
+      version: 8 | 21 | 25,
       preferredPath?: string,
     ): Promise<{ success: boolean; path?: string; downloaded?: boolean; usedPreferred?: boolean; error?: string }> =>
       ipcRenderer.invoke(IPC.JAVA_ENSURE, version, preferredPath),
@@ -140,8 +157,8 @@ const launcherApi = {
     detect: (): Promise<Array<{ version: string; path: string; source: string }>> =>
       ipcRenderer.invoke(IPC.JAVA_DETECT),
 
-    /** Get default Java paths for jre8 and jre21. */
-    getDefaultPaths: (): Promise<{ jre8Path: string; jre21Path: string }> =>
+    /** Get default Java paths for jre8, jre21 and jre25. */
+    getDefaultPaths: (): Promise<{ jre8Path: string; jre21Path: string; jre25Path: string }> =>
       ipcRenderer.invoke(IPC.JAVA_GET_DEFAULT_PATHS), /** Find the java executable inside a given folder (JRE/JDK root). */
     findExecutable: (folderPath: string): Promise<string> =>
       ipcRenderer.invoke(IPC.JAVA_FIND_EXECUTABLE, folderPath),

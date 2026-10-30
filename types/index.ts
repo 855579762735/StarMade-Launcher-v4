@@ -1,3 +1,6 @@
+/** Java major versions the launcher supports. Mirrors `JavaVersion` in electron/java.ts. */
+export type JavaVersion = 8 | 21 | 25;
+
 export type ItemType = 'latest' | 'release' | 'dev' | 'archive' | 'pre';
 
 // ─── Session types ────────────────────────────────────────────────────────────
@@ -25,12 +28,13 @@ export interface PlaySession {
   /** Whether this was a singleplayer world or a multiplayer server connection. */
   sessionType: 'singleplayer' | 'multiplayer';
   /**
-   * Server address passed via `-uplink`.
-   * `'localhost'` for singleplayer worlds, the remote IP for multiplayer.
+   * Server address passed via `-uplink`. Absent for singleplayer: an ordinary
+   * launch passes no `-uplink` at all, and recording a placeholder here would
+   * relaunch the session as a direct connection instead.
    */
-  serverAddress: string;
-  /** Server port (typically 4242). */
-  serverPort: number;
+  serverAddress?: string;
+  /** Server port for `-uplink` (typically 4242). Absent for singleplayer. */
+  serverPort?: number;
   /** Enabled mod IDs to be passed as a comma-separated list after `-uplink`. */
   modIds?: string[];
   /** ISO 8601 timestamp of the last time this session was launched. */
@@ -90,8 +94,8 @@ export interface ManagedItem {
   buildPath?: string;
   /** True once the game files have been downloaded and verified. Undefined for legacy/mock items (treated as installed). */
   installed?: boolean;
-  /** Which Java major version this installation requires (8 for < 0.3.x, 21 for >= 0.3.x). */
-  requiredJavaVersion?: 8 | 21;
+  /** Which Java major version this installation requires (8 for < 0.3.x, 21 for >= 0.3.x, 25 for >= 0.4.6). */
+  requiredJavaVersion?: JavaVersion;
   // ── Per-installation launch settings ──────────────────────────────────────
   /** Minimum JVM heap in MB (passed as -Xms). */
   minMemory?: number;
@@ -138,8 +142,8 @@ export interface Version {
   build?: string;
   /** Server-side build path (e.g. `./build/starmade-build_20231020_123456`). */
   buildPath?: string;
-  /** Which Java major version this StarMade version requires (8 for < 0.3.x, 21 for >= 0.3.x). */
-  requiredJavaVersion?: 8 | 21;
+  /** Which Java major version this StarMade version requires (8 for < 0.3.x, 21 for >= 0.3.x, 25 for >= 0.4.6). */
+  requiredJavaVersion?: JavaVersion;
 }
 
 // ─── Download types ───────────────────────────────────────────────────────────
@@ -323,6 +327,8 @@ export interface AppContextType {
     isLaunchModalOpen: boolean;
     isLaunching: boolean;
     launchError: string | null;
+    /** Dismiss a launch failure notice without starting another launch. */
+    dismissLaunchError: () => void;
     /** Human-readable status shown in the launch button during pre-launch steps (e.g. "Downloading Java 8…"). */
     launchStatus: string | null;
     logViewerOpen: boolean;

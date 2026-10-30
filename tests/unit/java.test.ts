@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -19,6 +19,11 @@ vi.mock('tar-stream', () => ({
 }));
 
 import {
+  safeExtractPath,
+  safeLinkTarget,
+  isRealPathInside,
+  isAllowedDownloadUrl,
+  getAdoptiumAsset,
   getRequiredJavaVersion,
   getJvmArgsForJava,
   parseJavaVersion,
@@ -27,7 +32,9 @@ import {
   versionProbePath,
   ensureJava,
   JAVA_21_ARGS,
+  JAVA_25_ARGS,
   JAVA_8_ARGS,
+  isJavaVersion,
 } from '@/electron/java.ts';
 
 describe('getRequiredJavaVersion', () => {
@@ -74,16 +81,72 @@ describe('getRequiredJavaVersion', () => {
       expect(getRequiredJavaVersion('0.399.0')).toBe(21);
     });
 
-    it('returns 21 for version 1.0.0 (major >= 1)', () => {
-      expect(getRequiredJavaVersion('1.0.0')).toBe(21);
+    it('returns 21 for version 0.400.307 (last legacy-scheme pre build)', () => {
+      expect(getRequiredJavaVersion('0.400.307')).toBe(21);
+    });
+  });
+
+  describe('current version scheme (0.4.x counter, introduced 2026-08)', () => {
+    it('returns 21 for version 0.4.0', () => {
+      expect(getRequiredJavaVersion('0.4.0')).toBe(21);
     });
 
-    it('returns 21 for version 1.5.3', () => {
-      expect(getRequiredJavaVersion('1.5.3')).toBe(21);
+    it('returns 21 for version 0.4.1', () => {
+      expect(getRequiredJavaVersion('0.4.1')).toBe(21);
     });
 
-    it('returns 21 for version 2.0.0', () => {
-      expect(getRequiredJavaVersion('2.0.0')).toBe(21);
+    it('returns 21 for version 0.4.5 (last Java 21 build)', () => {
+      expect(getRequiredJavaVersion('0.4.5')).toBe(21);
+    });
+
+    it('returns 21 for a two-component 0.5 (read as the legacy decimal 0.5)', () => {
+      expect(getRequiredJavaVersion('0.5')).toBe(21);
+    });
+  });
+
+  describe('versions >= 0.4.6 → Java 25', () => {
+    it('returns 25 for version 0.4.6 (first version requiring Java 25)', () => {
+      expect(getRequiredJavaVersion('0.4.6')).toBe(25);
+    });
+
+    it('returns 25 for version 0.4.12 (patch beyond 6)', () => {
+      expect(getRequiredJavaVersion('0.4.12')).toBe(25);
+    });
+
+    it('returns 25 for a pre-release patch suffix (0.4.6-rc1)', () => {
+      expect(getRequiredJavaVersion('0.4.6-rc1')).toBe(25);
+    });
+
+    it('returns 25 for version 0.5.0 (minor beyond 4)', () => {
+      expect(getRequiredJavaVersion('0.5.0')).toBe(25);
+    });
+
+    it('returns 25 for a future two-digit minor (0.10.0)', () => {
+      expect(getRequiredJavaVersion('0.10.0')).toBe(25);
+    });
+
+    it('returns 25 for major >= 1 (1.0.0, 1.5.3, 2.0.0)', () => {
+      expect(getRequiredJavaVersion('1.0.0')).toBe(25);
+      expect(getRequiredJavaVersion('1.5.3')).toBe(25);
+      expect(getRequiredJavaVersion('2.0.0')).toBe(25);
+    });
+  });
+
+  describe('legacy decimal versions are compared as fractions', () => {
+    it('returns 8 for version 0.17 (2014-era build)', () => {
+      expect(getRequiredJavaVersion('0.17')).toBe(8);
+    });
+
+    it('returns 8 for version 0.1801 (decimal 0.1801, not minor 1801)', () => {
+      expect(getRequiredJavaVersion('0.1801')).toBe(8);
+    });
+
+    it('returns 8 for version 0.19624', () => {
+      expect(getRequiredJavaVersion('0.19624')).toBe(8);
+    });
+
+    it('returns 8 for version 0.163', () => {
+      expect(getRequiredJavaVersion('0.163')).toBe(8);
     });
   });
 });
@@ -99,6 +162,25 @@ describe('getJvmArgsForJava', () => {
   it('returns JAVA_8_ARGS (empty array) for Java 8', () => {
     expect(getJvmArgsForJava(8)).toEqual(JAVA_8_ARGS);
     expect(getJvmArgsForJava(8)).toHaveLength(0);
+  });
+
+  it('returns JAVA_25_ARGS for Java 25 — the Java 21 opens plus compact object headers', () => {
+    expect(getJvmArgsForJava(25)).toEqual(JAVA_25_ARGS);
+    expect(getJvmArgsForJava(25)).toEqual(expect.arrayContaining(JAVA_21_ARGS));
+    expect(getJvmArgsForJava(25)).toContain('-XX:+UseCompactObjectHeaders');
+    expect(getJvmArgsForJava(25)).not.toContain('-XX:+UseZGC');
+  });
+});
+
+describe('isJavaVersion', () => {
+  it('accepts the supported versions', () => {
+    expect([8, 21, 25].every(isJavaVersion)).toBe(true);
+  });
+
+  it('rejects anything else (IPC arguments reach a path and a URL)', () => {
+    for (const bad of [17, '21', 0, null, undefined, '../evil', {}]) {
+      expect(isJavaVersion(bad)).toBe(false);
+    }
   });
 });
 
@@ -322,5 +404,118 @@ describe('ensureJava', () => {
     });
     expect(result).toEqual({ path: '/downloaded/java21', downloaded: true, usedPreferred: false });
     expect(download).toHaveBeenCalledOnce();
+  });
+});
+
+describe('safeExtractPath', () => {
+  const target = path.join(os.tmpdir(), 'jre21');
+
+  it('resolves normal entries inside the target', () => {
+    expect(safeExtractPath(target, 'bin/java')).toBe(path.join(target, 'bin', 'java'));
+  });
+
+  it('rejects traversal entries', () => {
+    expect(safeExtractPath(target, '../evil')).toBeNull();
+    expect(safeExtractPath(target, 'bin/../../../evil')).toBeNull();
+    expect(safeExtractPath(target, path.join(path.parse(target).root, 'abs', 'evil'))).toBeNull();
+  });
+
+  it('rejects sibling dirs that share the target prefix', () => {
+    expect(safeExtractPath(target, '../jre21-evil/x')).toBeNull();
+  });
+});
+
+describe('safeLinkTarget', () => {
+  const target = path.join(os.tmpdir(), 'jre25');
+  const entry = path.join(target, 'jdk-25.0.5+8-jre', 'legal', 'jdk.nio.mapmode', 'ASSEMBLY_EXCEPTION');
+
+  it('allows symlinks that climb out of their own dir but stay inside the target', () => {
+    expect(safeLinkTarget(target, entry, '../java.base/ASSEMBLY_EXCEPTION', false))
+      .toBe(path.join(target, 'jdk-25.0.5+8-jre', 'legal', 'java.base', 'ASSEMBLY_EXCEPTION'));
+  });
+
+  it('rejects symlinks that escape the target', () => {
+    expect(safeLinkTarget(target, entry, '../../../../evil', false)).toBeNull();
+    expect(safeLinkTarget(target, entry, path.join(path.parse(target).root, 'etc', 'passwd'), false)).toBeNull();
+  });
+
+  it('resolves hard links from the archive root', () => {
+    expect(safeLinkTarget(target, entry, 'jdk-25.0.5+8-jre/bin/java', true))
+      .toBe(path.join(target, 'jdk-25.0.5+8-jre', 'bin', 'java'));
+    expect(safeLinkTarget(target, entry, '../evil', true)).toBeNull();
+  });
+});
+
+describe('isRealPathInside', () => {
+  it('follows existing symlinks when checking containment', () => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), 'jre-realpath-'));
+    const root = path.join(base, 'root');
+    const outside = path.join(base, 'outside');
+    fs.mkdirSync(path.join(root, 'legal', 'java.base'), { recursive: true });
+    fs.mkdirSync(outside);
+    fs.symlinkSync(outside, path.join(root, 'escape'));
+    try {
+      expect(isRealPathInside(root, path.join(root, 'legal', 'java.base'))).toBe(true);
+      expect(isRealPathInside(root, path.join(root, 'legal', 'not-yet', 'deeper'))).toBe(true);
+      expect(isRealPathInside(root, path.join(root, 'escape'))).toBe(false);
+      expect(isRealPathInside(root, path.join(root, 'escape', 'new-dir'))).toBe(false);
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('getAdoptiumAsset', () => {
+  const mockFetch = (body: unknown, ok = true) => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok, status: ok ? 200 : 503, json: async () => body })));
+  };
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('returns the archive package link and checksum, not the installer', async () => {
+    mockFetch([{
+      binary: {
+        installer: { link: 'https://example.test/jre.msi', checksum: 'aaa' },
+        package:   { link: 'https://example.test/jre.zip', checksum: 'BBB' },
+      },
+    }]);
+    await expect(getAdoptiumAsset(21)).resolves.toEqual({
+      link: 'https://example.test/jre.zip',
+      checksum: 'BBB',
+    });
+  });
+
+  it('throws when the API omits a checksum', async () => {
+    mockFetch([{ binary: { package: { link: 'https://example.test/jre.zip' } } }]);
+    await expect(getAdoptiumAsset(21)).rejects.toThrow(/no JRE package/);
+  });
+
+  it('throws on a non-OK response', async () => {
+    mockFetch([], false);
+    await expect(getAdoptiumAsset(21)).rejects.toThrow(/HTTP 503/);
+  });
+});
+
+describe('isAllowedDownloadUrl', () => {
+  it('allows the Adoptium redirect chain', () => {
+    for (const url of [
+      'https://api.adoptium.net/v3/binary/latest/21/ga/windows/x64/jre/hotspot/normal/eclipse',
+      'https://github.com/adoptium/temurin21-binaries/releases/download/x/jre.zip',
+      'https://release-assets.githubusercontent.com/github-production-release-asset/1/2?sig=x',
+      'https://objects.githubusercontent.com/legacy-asset-host/1',
+    ]) {
+      expect(isAllowedDownloadUrl(url)).toBe(true);
+    }
+  });
+
+  it('rejects lookalike hosts that merely end with an allowed name', () => {
+    expect(isAllowedDownloadUrl('https://evilgithub.com/x')).toBe(false);
+    expect(isAllowedDownloadUrl('https://github.com.evil.test/x')).toBe(false);
+    expect(isAllowedDownloadUrl('https://notadoptium.net/x')).toBe(false);
+  });
+
+  it('rejects non-https and unparseable URLs', () => {
+    expect(isAllowedDownloadUrl('http://github.com/x')).toBe(false);
+    expect(isAllowedDownloadUrl('file:///etc/passwd')).toBe(false);
+    expect(isAllowedDownloadUrl('not a url')).toBe(false);
   });
 });

@@ -481,7 +481,10 @@ export class RemoteFileBackend {
     relPath: string,
     content: string,
   ): Promise<{ success: boolean; error?: string }> {
-    const tmpPath = path.join(os.tmpdir(), `sm-launcher-ftp-${Date.now()}.tmp`);
+    // mkdtemp, not a predictable name in the shared temp dir: a local attacker
+    // could otherwise pre-create the path as a symlink and redirect the write.
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sm-launcher-ftp-'));
+    const tmpPath = path.join(tmpDir, 'upload.tmp');
     try {
       fs.writeFileSync(tmpPath, content, 'utf8');
       const url = buildFtpUrl(session, relPath, false);
@@ -492,7 +495,7 @@ export class RemoteFileBackend {
     } catch (error) {
       return { success: false, error: String(error) };
     } finally {
-      try { fs.unlinkSync(tmpPath); } catch { /* ignore */ }
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
     }
   }
 }

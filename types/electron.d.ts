@@ -61,6 +61,11 @@ declare global {
         getServerPanelSchema: () => Promise<unknown>;
         /** Whether the launcher was started by Steam in Big Picture / Gaming Mode. */
         isSteamGamingMode: () => Promise<boolean>;
+        /** Pending Steam friend join (`version` is the host's game version), or null. */
+        getPendingSteamJoin: () => Promise<{ version?: string } | null>;
+        clearPendingSteamJoin: () => Promise<void>;
+        /** Fires when an already-open launcher receives a new Steam friend join. Returns an unsubscribe. */
+        onSteamJoinRequested: (cb: () => void) => () => void;
       };
 
       /** Third-party licenses APIs */
@@ -115,6 +120,11 @@ declare global {
         fetch: (invalidate?: boolean) => Promise<Version[]>;
       };
 
+      news: {
+        /** Fetch the Steam news feed as raw RSS XML via the main process (no CORS). */
+        fetch: () => Promise<{ success: boolean; xml?: string; error?: string }>;
+      };
+
       /** Game download API — Phase 3. */
       download: {
         /**
@@ -140,20 +150,20 @@ declare global {
           system: Array<{ version: string; path: string; source: string }>;
         }>;
         /** Download and install a Java runtime (8 or 21). */
-        download: (version: 8 | 21) => Promise<{ success: boolean; path?: string; error?: string }>;
+        download: (version: 8 | 21 | 25) => Promise<{ success: boolean; path?: string; error?: string }>;
         /**
          * Ensure a usable Java for the version is available, downloading only if
          * needed. `preferredPath` (e.g. an install's customJavaPath) is kept when
          * still valid, reported via `usedPreferred`.
          */
         ensure: (
-          version: 8 | 21,
+          version: 8 | 21 | 25,
           preferredPath?: string,
         ) => Promise<{ success: boolean; path?: string; downloaded?: boolean; usedPreferred?: boolean; error?: string }>;
         /** Scan for system-installed Java versions. */
         detect: () => Promise<Array<{ version: string; path: string; source: string }>>;
         /** Get default Java paths for jre8 and jre21. */
-        getDefaultPaths: () => Promise<{ jre8Path: string; jre21Path: string }>;
+        getDefaultPaths: () => Promise<{ jre8Path: string; jre21Path: string; jre25Path: string }>;
         /** Find the java executable inside a given folder (JRE/JDK root). */
         findExecutable: (folderPath: string) => Promise<string>;
       };

@@ -7,7 +7,7 @@
  * Reference: v2 launcher `src/services/updater.coffee` — getVersions()
  */
 
-import { getRequiredJavaVersion } from './java.js';
+import { getRequiredJavaVersion, type JavaVersion } from './java.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -31,7 +31,7 @@ export interface FetchedVersion {
   type: 'release' | 'dev' | 'pre' | 'archive';
   build: string;
   buildPath: string;
-  requiredJavaVersion: 8 | 21;
+  requiredJavaVersion: JavaVersion;
 }
 
 // ─── Cache ────────────────────────────────────────────────────────────────────

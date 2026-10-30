@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { isRunningAsAppImage } from '../../electron/appimage-detect.js';
 import { isRunningOnWayland } from '../../electron/wayland-detect.js';
 import { parseVersionTxt } from '../../electron/legacy.js';
+import { fitWindowBounds } from '../../electron/window-bounds.js';
 
 // ─── isRunningAsAppImage ──────────────────────────────────────────────────────
 
@@ -115,3 +116,69 @@ describe('parseVersionTxt', () => {
   });
 });
 
+
+// ─── fitWindowBounds ──────────────────────────────────────────────────────────
+
+describe('fitWindowBounds', () => {
+  // Work areas a 1920x1080 Windows desktop reports at the common UI scales.
+  const scale100 = { x: 0, y: 0, width: 1920, height: 1040 };
+  const scale125 = { x: 0, y: 0, width: 1536, height: 824 };
+  const scale150 = { x: 0, y: 0, width: 1280, height: 690 };
+  const mainWindow = { width: 1460, height: 1024, minWidth: 1024, minHeight: 600 };
+
+  it('keeps the requested size when it fits (100% scale)', () => {
+    expect(fitWindowBounds(mainWindow, scale100)).toEqual({
+      width: 1460, height: 1024, x: 230, y: 8, minWidth: 1024, minHeight: 600,
+    });
+  });
+
+  it('shrinks a too-tall window to the work area at 125% scale', () => {
+    const fitted = fitWindowBounds(mainWindow, scale125);
+    expect(fitted.height).toBe(824);
+    expect(fitted.width).toBe(1460);
+    // Title bar must stay on screen — this is what broke at non-100% scale.
+    expect(fitted.y).toBe(0);
+  });
+
+  it('shrinks both axes and the minimums at 150% scale', () => {
+    expect(fitWindowBounds(mainWindow, scale150)).toEqual({
+      width: 1280, height: 690, x: 0, y: 0, minWidth: 1024, minHeight: 600,
+    });
+  });
+
+  it('never leaves a minimum larger than the window', () => {
+    const fitted = fitWindowBounds(
+      { width: 1440, height: 980, minWidth: 1100, minHeight: 720 },
+      scale150,
+    );
+    expect(fitted.minWidth).toBeLessThanOrEqual(fitted.width);
+    expect(fitted.minHeight).toBeLessThanOrEqual(fitted.height);
+  });
+
+  it('pulls remembered bounds back inside the work area', () => {
+    const fitted = fitWindowBounds(
+      { width: 1440, height: 980, x: 1200, y: 900, minWidth: 1100, minHeight: 720 },
+      scale125,
+    );
+    expect(fitted.x + fitted.width).toBeLessThanOrEqual(scale125.width);
+    expect(fitted.y + fitted.height).toBeLessThanOrEqual(scale125.height);
+    expect(fitted.x).toBeGreaterThanOrEqual(0);
+    expect(fitted.y).toBeGreaterThanOrEqual(0);
+  });
+
+  it('honours a work-area offset (taskbar / secondary display)', () => {
+    const secondary = { x: 1920, y: 40, width: 1280, height: 690 };
+    const fitted = fitWindowBounds(mainWindow, secondary);
+    expect(fitted.x).toBe(1920);
+    expect(fitted.y).toBe(40);
+  });
+
+  it('clamps a remembered position that sits before the work-area origin', () => {
+    const fitted = fitWindowBounds(
+      { width: 1200, height: 600, x: -500, y: -200, minWidth: 1024, minHeight: 600 },
+      { x: 0, y: 40, width: 1536, height: 824 },
+    );
+    expect(fitted.x).toBe(0);
+    expect(fitted.y).toBe(40);
+  });
+});

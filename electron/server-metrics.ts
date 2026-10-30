@@ -150,7 +150,7 @@ export function parseDockerByteSize(raw: string | undefined): number {
 /** Parse a percentage string like "12.34%" into a number, or NaN. */
 export function parseDockerPercent(raw: string | undefined): number {
   if (!raw) return Number.NaN;
-  return Number.parseFloat(raw.replace('%', '').trim());
+  return Number.parseFloat(raw.replace(/%/g, '').trim());
 }
 
 /**

@@ -45,6 +45,8 @@ const ASAR_ASSET_NAME = 'app.asar';
 const UPDATE_FILE_NAME = 'app_update.asar';
 /** Staged filename for the Windows portable .exe update (see installUpdateWindows). */
 const UPDATE_EXE_NAME  = 'app_update.exe';
+/** Staged filename for the Linux AppImage update (see installUpdateAppImage). */
+const UPDATE_APPIMAGE_NAME = 'app_update.AppImage';
 
 /**
  * Persistent directory for storing the downloaded update between launches.
@@ -53,6 +55,20 @@ const UPDATE_EXE_NAME  = 'app_update.exe';
  */
 function getUpdateStageDir(): string {
   return app.getPath('userData');
+}
+
+/**
+ * Path of the running `.AppImage` file, or undefined when not running as one.
+ *
+ * An AppImage's resources dir lives inside its squashfs mount (or, with
+ * extract-and-run, a throwaway extraction) under /tmp — read-only and/or
+ * discarded on exit — so the app.asar swap can never persist there.  The
+ * `.AppImage` file itself must be replaced instead.
+ */
+function getAppImagePath(): string | undefined {
+  if (process.platform !== 'linux') return undefined;
+  const appImage = process.env.APPIMAGE;
+  return appImage && fs.existsSync(appImage) ? appImage : undefined;
 }
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -273,6 +289,14 @@ export async function checkForUpdates(
         assetUrl  = exeAsset.browser_download_url;
         assetName = exeAsset.name;
       }
+    } else if (getAppImagePath()) {
+      // Linux AppImage: the asar swap can't persist (see getAppImagePath), so
+      // update the .AppImage itself via installUpdateAppImage().
+      const appImageAsset = findPlatformAsset(assets);
+      if (appImageAsset) {
+        assetUrl  = appImageAsset.browser_download_url;
+        assetName = appImageAsset.name;
+      }
     } else {
       // macOS / Linux: swap the platform-independent app.asar for a silent update.
       const asarAsset = findAsarAsset(assets);
@@ -314,8 +338,12 @@ export async function downloadUpdate(
   onProgress: (progress: DownloadProgress) => void
 ): Promise<string> {
   const stageDir = getUpdateStageDir();
-  const isExe    = /\.exe$/i.test(assetName);
-  const destPath = path.join(stageDir, isExe ? UPDATE_EXE_NAME : UPDATE_FILE_NAME);
+  const isExe      = /\.exe$/i.test(assetName);
+  const isAppImage = /\.AppImage$/i.test(assetName);
+  const destPath   = path.join(
+    stageDir,
+    isExe ? UPDATE_EXE_NAME : isAppImage ? UPDATE_APPIMAGE_NAME : UPDATE_FILE_NAME,
+  );
 
   // Remove a stale partial download if present
   try { fs.unlinkSync(destPath); } catch { /* ignore */ }
@@ -347,8 +375,9 @@ export async function downloadUpdate(
   const fd = fs.openSync(destPath, 'r');
   let firstByte: number;
   let fileSize: number;
+  let header: Buffer;
   try {
-    const header = Buffer.alloc(16);
+    header = Buffer.alloc(16);
     fs.readSync(fd, header, 0, 16, 0);
     firstByte = header[0];
     fileSize = fs.fstatSync(fd).size;
@@ -361,6 +390,12 @@ export async function downloadUpdate(
     if (fileSize < 1024 || firstByte !== 0x4D /* M */) {
       try { fs.unlinkSync(destPath); } catch { /* ignore */ }
       throw new Error(`Downloaded file is not a valid Windows executable (first byte: 0x${firstByte.toString(16)}, size: ${fileSize})`);
+    }
+  } else if (isAppImage) {
+    // AppImages are ELF executables: magic 0x7F 'E' 'L' 'F'.
+    if (fileSize < 1024 || header.readUInt32BE(0) !== 0x7F454C46) {
+      try { fs.unlinkSync(destPath); } catch { /* ignore */ }
+      throw new Error(`Downloaded file is not a valid AppImage (first byte: 0x${firstByte.toString(16)}, size: ${fileSize})`);
     }
   } else {
     // ASAR header: 4 bytes pickle size, 4 bytes header-string size,
@@ -397,6 +432,11 @@ export async function installUpdate(installerPath: string): Promise<void> {
   // Replace the .exe itself via a detached helper instead.
   if (process.platform === 'win32') {
     installUpdateWindows(installerPath);
+    return;
+  }
+
+  if (/\.AppImage$/i.test(installerPath)) {
+    await installUpdateAppImage(installerPath);
     return;
   }
 
@@ -504,6 +544,44 @@ function installUpdateWindows(newExePath: string): void {
 }
 
 /**
+ * Apply a Linux AppImage update by replacing the `.AppImage` file on disk.
+ *
+ * The new image is copied next to the original and renamed over it.  The
+ * rename is atomic and the running process keeps its already-open inode, so
+ * this is safe while the launcher is running.  We then relaunch the
+ * `.AppImage` file itself — NOT process.execPath, which points into the
+ * current /tmp mount that disappears once this process exits.
+ */
+async function installUpdateAppImage(newAppImagePath: string): Promise<void> {
+  const targetAppImage = getAppImagePath();
+  if (!targetAppImage) {
+    console.error('[Updater] Not running from an AppImage, opening browser fallback');
+    await shell.openExternal(GITHUB_RELEASES_PAGE);
+    return;
+  }
+
+  const tempPath = `${targetAppImage}.update`;
+  try {
+    fs.copyFileSync(newAppImagePath, tempPath);
+    fs.chmodSync(tempPath, 0o755);
+    fs.renameSync(tempPath, targetAppImage);
+    console.log('[Updater] AppImage replaced successfully');
+  } catch (err) {
+    // Most likely the AppImage lives in a directory the user can't write to.
+    console.error('[Updater] Failed to replace AppImage:', err);
+    try { fs.unlinkSync(tempPath); } catch { /* ignore */ }
+    await shell.openExternal(GITHUB_RELEASES_PAGE);
+    return;
+  }
+
+  try { fs.unlinkSync(newAppImagePath); } catch { /* ignore */ }
+
+  app.relaunch({ execPath: targetAppImage, args: process.argv.slice(1) });
+  app.quit();
+  setTimeout(() => app.exit(0), 1000);
+}
+
+/**
  * Apply a pending update if one exists.
  *
  * Call this VERY EARLY in the main process (before `app.on('ready')`).
@@ -522,6 +600,14 @@ export function applyPendingUpdate(): boolean {
     const updatePath = path.join(stageDir, UPDATE_FILE_NAME);
 
     if (!fs.existsSync(updatePath)) return false;
+
+    // An AppImage's resources dir is read-only / ephemeral, so a staged asar
+    // can never be applied there (AppImages update via installUpdateAppImage).
+    // Drop it rather than retrying — and relaunching — on every start.
+    if (getAppImagePath()) {
+      try { fs.unlinkSync(updatePath); } catch { /* ignore */ }
+      return false;
+    }
 
     console.log('[Updater] Found pending update, applying...');
 

@@ -34,6 +34,13 @@ export const IPC = {
   /** Renderer → Main (invoke): fetch all available versions from the StarMade CDN. Returns Version[]. */
   VERSIONS_FETCH: 'versions:fetch',
 
+  /**
+   * Renderer → Main (invoke): fetch the Steam news RSS feed.
+   * Done in the main process because the renderer is subject to CORS and the
+   * public proxies that worked around it are unreliable.
+   */
+  NEWS_FETCH: 'news:fetch',
+
   // ─── Phase 3: Game download ───────────────────────────────────────────────
 
   /** Renderer → Main (invoke): start downloading game files for an installation. */
@@ -51,13 +58,13 @@ export const IPC = {
 
   /** Renderer → Main (invoke): list all detected Java runtimes (bundled + system). */
   JAVA_LIST: 'java:list',
-  /** Renderer → Main (invoke): download and install a Java runtime (8 or 21). */
+  /** Renderer → Main (invoke): download and install a Java runtime (8, 21 or 25). */
   JAVA_DOWNLOAD: 'java:download',
   /** Renderer → Main (invoke): ensure a usable Java for a version, downloading only if needed. */
   JAVA_ENSURE: 'java:ensure',
   /** Renderer → Main (invoke): scan for system-installed Java versions. */
   JAVA_DETECT: 'java:detect',
-  /** Renderer → Main (invoke): get default Java paths for jre8 and jre21. */
+  /** Renderer → Main (invoke): get default Java paths for jre8, jre21 and jre25. */
   JAVA_GET_DEFAULT_PATHS: 'java:get-default-paths',
   /** Renderer → Main (invoke): find a Java executable inside a given folder. */
   JAVA_FIND_EXECUTABLE: 'java:find-executable',
@@ -178,6 +185,12 @@ export const IPC = {
    * Returns: boolean
    */
   APP_IS_STEAM_GAMING_MODE: 'app:is-steam-gaming-mode',
+  /** Pending Steam friend join: `{ version? }`, or null when there is none. */
+  STEAM_GET_PENDING_JOIN: 'steam:get-pending-join',
+  /** Drops the pending Steam friend join (the player declined it). */
+  STEAM_CLEAR_PENDING_JOIN: 'steam:clear-pending-join',
+  /** Main → renderer: a second launcher instance passed a new Steam friend join. */
+  STEAM_JOIN_REQUESTED: 'steam:join-requested',
 
   // ─── Licenses ───────────────────────────────────────────────────────────────
 

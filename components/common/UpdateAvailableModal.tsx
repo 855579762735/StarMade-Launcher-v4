@@ -55,6 +55,8 @@ function extractWhatsChanged(notes: string): string {
 
   // Find the next same-or-higher-level heading that isn't this one
   const headingLevel = (match[0].match(/^#+/) ?? ['#'])[0].length;
+  // Reviewed: `headingLevel` is a number, not user text.
+  // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp
   const nextHeadingRegex = new RegExp(`^#{1,${headingLevel}}\\s`, 'm');
   const nextMatch = afterHeading.slice(match[0].length).search(nextHeadingRegex);
 
@@ -147,12 +149,13 @@ const UpdateAvailableModal: React.FC<UpdateAvailableModalProps> = ({
 
     if (!isOpen || !updateInfo) return null;
 
-    // Auto-installable assets: the platform-independent app.asar (macOS/Linux)
-    // and the Windows portable .exe (swapped via a detached helper). A .dmg /
-    // .AppImage fallback is NOT silently installable — those open in browser.
+    // Auto-installable assets: the platform-independent app.asar (macOS/Linux),
+    // the Windows portable .exe (swapped via a detached helper) and the Linux
+    // .AppImage (replaced on disk). A .dmg fallback is NOT silently
+    // installable — that opens in browser.
     const canSilentInstall =
         Boolean(updateInfo.assetUrl) &&
-        (updateInfo.assetName === 'app.asar' || /\.exe$/i.test(updateInfo.assetName ?? ''));
+        (updateInfo.assetName === 'app.asar' || /\.(exe|AppImage)$/i.test(updateInfo.assetName ?? ''));
 
     const formatBytes = (b: number) => {
         if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;

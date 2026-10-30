@@ -321,6 +321,8 @@ export interface LaunchOptions {
   uplinkPort?: number;
   /** Enabled mod IDs. Passed as a comma-separated list after the `-uplink` port. */
   modIds?: string[];
+  /** Steam friend-join tokens (see steamJoinArgs). Ignored for servers and when `uplink` is set. */
+  steamJoinArgs?: string[];
 }
 
 export interface LaunchResult {
@@ -337,6 +339,7 @@ export interface LaunchCommandArgOptions {
   uplink?: string;
   uplinkPort?: number;
   modIds?: string[];
+  steamJoinArgs?: string[];
 }
 
 /** Build raw argv for the spawned Java process. */
@@ -349,6 +352,7 @@ export function buildLaunchArgs(options: LaunchCommandArgOptions): string[] {
     uplink,
     uplinkPort,
     modIds,
+    steamJoinArgs,
   } = options;
 
   const args = [
@@ -375,6 +379,8 @@ export function buildLaunchArgs(options: LaunchCommandArgOptions): string[] {
     if (modIds && modIds.length > 0) {
       args.push(modIds.join(','));
     }
+  } else if (!isServer && steamJoinArgs && steamJoinArgs.length > 0) {
+    args.push(...steamJoinArgs);
   }
 
   return args;
@@ -411,6 +417,7 @@ export async function launchGame(options: LaunchOptions): Promise<LaunchResult> 
     uplink,
     uplinkPort,
     modIds,
+    steamJoinArgs,
   } = options;
 
   // Check if already running
@@ -506,8 +513,8 @@ export async function launchGame(options: LaunchOptions): Promise<LaunchResult> 
     ];
 
     // macOS + GLFW/LWJGL3 requires -XstartOnFirstThread for client launches.
-    // Only applies to Java 21 versions (>= 0.3xx) that use LWJGL3.
-    if (process.platform === 'darwin' && !isServer && requiredJavaVersion === 21) {
+    // Only applies to the modern versions (>= 0.3xx) that use LWJGL3.
+    if (process.platform === 'darwin' && !isServer && requiredJavaVersion !== 8) {
       jvmArgList.unshift(...MACOS_CLIENT_ARGS);
     }
 
@@ -524,6 +531,7 @@ export async function launchGame(options: LaunchOptions): Promise<LaunchResult> 
       uplink,
       uplinkPort,
       modIds,
+      steamJoinArgs,
     });
 
     // Only client launches inject registry auth tokens.
@@ -543,6 +551,9 @@ export async function launchGame(options: LaunchOptions): Promise<LaunchResult> 
     // Spawn the process detached so it lives outside the Electron process
     // tree.  This lets Steam (and other launchers) see the Electron app as
     // exited once its windows close, even while StarMade keeps running.
+    // Spawning Java is the launcher's whole job; `javaPath` and `args` are built
+    // from the managed install, never from a string the user or a server supplies.
+    // nosemgrep: javascript.lang.security.detect-child-process.detect-child-process
     const child = spawn(javaPath, args, {
       cwd: installationPath,
       stdio: [isServer ? 'pipe' : 'ignore', 'pipe', 'pipe'],
@@ -949,17 +960,18 @@ export function readServerLogFile(
     throw new Error('Invalid log file path.');
   }
 
-  const stat = fs.statSync(filePath);
-  if (!stat.isFile()) {
-    throw new Error('Log path is not a file.');
-  }
-
-  const size = stat.size;
-  const bytesToRead = Math.max(1, Math.min(Math.floor(maxBytes), size));
-  const start = Math.max(0, size - bytesToRead);
-
+  // Stat through the open descriptor, not the path: statting first and opening
+  // afterwards lets the path be swapped in between (TOCTOU).
   const fd = fs.openSync(filePath, 'r');
   try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile()) {
+      throw new Error('Log path is not a file.');
+    }
+
+    const size = stat.size;
+    const bytesToRead = Math.max(1, Math.min(Math.floor(maxBytes), size));
+    const start = Math.max(0, size - bytesToRead);
     const buffer = Buffer.alloc(size === 0 ? 0 : bytesToRead);
     if (buffer.length > 0) {
       fs.readSync(fd, buffer, 0, buffer.length, start);
@@ -1097,15 +1109,15 @@ export function readChatFile(
     throw new Error('Invalid chat file path.');
   }
 
-  const stat = fs.statSync(filePath);
-  if (!stat.isFile()) throw new Error('Chat path is not a file.');
-
-  const size = stat.size;
-  const bytesToRead = Math.max(1, Math.min(Math.floor(maxBytes), size));
-  const start = Math.max(0, size - bytesToRead);
-
+  // Stat through the open descriptor — see the log tail reader above.
   const fd = fs.openSync(filePath, 'r');
   try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile()) throw new Error('Chat path is not a file.');
+
+    const size = stat.size;
+    const bytesToRead = Math.max(1, Math.min(Math.floor(maxBytes), size));
+    const start = Math.max(0, size - bytesToRead);
     const buffer = Buffer.alloc(size === 0 ? 0 : bytesToRead);
     if (buffer.length > 0) {
       fs.readSync(fd, buffer, 0, buffer.length, start);

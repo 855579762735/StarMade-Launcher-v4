@@ -10,12 +10,18 @@ vi.mock('electron', () => ({
 vi.mock('adm-zip', () => ({ default: vi.fn() }));
 vi.mock('tar-stream', () => ({ default: { extract: vi.fn() } }));
 
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
 import {
   buildLaunchArgs,
   isStderrError,
   parseStarMadeLogLine,
+  readChatFile,
   redactLaunchArgs,
 } from '../../electron/launcher.js';
+import { steamJoinArgs, steamJoinVersion } from '../../electron/steam.js';
 import { LAUNCH_ARG_FIXTURES } from './fixtures/launcherArgs.fixtures';
 
 describe('parseStarMadeLogLine', () => {
@@ -142,3 +148,64 @@ describe('launch argument fixtures', () => {
   });
 });
 
+
+describe('steam friend join', () => {
+  const base = { jvmArgList: [] as string[] };
+
+  it('extracts join tokens from split or combined argv', () => {
+    expect(steamJoinArgs(['launcher.exe', '+connect', '1.2.3.4:4242', '+steamrelay', '765'])).toEqual(['+connect', '1.2.3.4:4242', '+steamrelay', '765']);
+    expect(steamJoinArgs(['launcher.exe', '+steamrelay 765'])).toEqual(['+steamrelay', '765']);
+    expect(steamJoinArgs(['launcher.exe', '--no-sandbox'])).toEqual([]);
+  });
+
+  it('reads the host version without forwarding it to the game', () => {
+    const argv = ['launcher.exe', '+connect 1.2.3.4:4242 +version 0.302.101'];
+    expect(steamJoinVersion(argv)).toBe('0.302.101');
+    expect(steamJoinArgs(argv)).toEqual(['+connect', '1.2.3.4:4242']);
+    expect(steamJoinVersion(['launcher.exe', '+steamrelay', '765'])).toBeUndefined();
+    expect(steamJoinVersion(['launcher.exe', '+version'])).toBeUndefined();
+  });
+
+  it('forwards tokens to client launches only, and never alongside -uplink', () => {
+    const join = ['+steamrelay', '765'];
+    expect(buildLaunchArgs({ ...base, steamJoinArgs: join })).toEqual(['-jar', 'StarMade.jar', '-force', ...join]);
+    expect(buildLaunchArgs({ ...base, isServer: true, steamJoinArgs: join })).not.toContain('+steamrelay');
+    expect(buildLaunchArgs({ ...base, uplink: 'localhost', steamJoinArgs: join })).not.toContain('+steamrelay');
+  });
+});
+
+// readChatFile stats and reads through a single descriptor; these cover the
+// tail-read arithmetic that the fstat-on-fd rewrite moved around.
+describe('readChatFile', () => {
+  function makeInstallation(body: string): string {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sm-chat-test-'));
+    fs.mkdirSync(path.join(root, 'chatlogs'));
+    fs.writeFileSync(path.join(root, 'chatlogs', 'chat.log'), body, 'utf8');
+    return root;
+  }
+
+  it('returns the whole file when it fits within maxBytes', () => {
+    const root = makeInstallation('line one\nline two\n');
+    expect(readChatFile(root, 'chat.log', 4096)).toEqual({
+      content: 'line one\nline two\n',
+      truncated: false,
+    });
+  });
+
+  it('reads the tail and drops the partial first line when truncating', () => {
+    const root = makeInstallation('aaaa\nbbbb\ncccc\n');
+    const result = readChatFile(root, 'chat.log', 8);
+    expect(result.truncated).toBe(true);
+    expect(result.content).toBe('cccc\n');
+  });
+
+  it('rejects a file name that escapes the chatlogs directory', () => {
+    const root = makeInstallation('x\n');
+    expect(() => readChatFile(root, '../../etc/passwd', 4096)).toThrow(/Invalid chat file path/);
+  });
+
+  it('rejects a directory', () => {
+    const root = makeInstallation('x\n');
+    expect(() => readChatFile(root, '.', 4096)).toThrow();
+  });
+});
